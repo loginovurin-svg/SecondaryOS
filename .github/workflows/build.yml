@@ -30,11 +30,17 @@ jobs:
         chmod +x scripts/prepare_assets.sh
         ./scripts/prepare_assets.sh
 
-    - name: Grant execute permission for gradlew
-      run: chmod +x gradlew
+    - name: Install Gradle
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y gradle
+        # Или используем gradle напрямую
+        echo "GRADLE_USER_HOME=$HOME/.gradle" >> $GITHUB_ENV
 
     - name: Build Debug APK
-      run: ./gradlew assembleDebug
+      run: |
+        # Используем gradle вместо ./gradlew
+        gradle assembleDebug --no-daemon
 
     - name: Upload APK artifact
       uses: actions/upload-artifact@v4
