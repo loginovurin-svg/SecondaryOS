@@ -46,7 +46,8 @@ public class MainActivity extends AppCompatActivity {
             File prootFile = new File(filesDir, "proot");
             File debianDir = new File(filesDir, "debian");
             File statusFile = new File(filesDir, "status.txt");
-            File rootfsArchive = new File(filesDir, "debian-rootfs.tar.gz");
+            // ИСПРАВЛЕНО: Android AAPT распаковывает .gz, поэтому файл называется .tar
+            File rootfsArchive = new File(filesDir, "debian-rootfs.tar");
 
             updateStatus("Проверка файлов...");
             log("=== Начало диагностики ===");
@@ -57,7 +58,7 @@ public class MainActivity extends AppCompatActivity {
             if (assets != null) {
                 log("Файлы в assets: " + String.join(", ", assets));
             } else {
-                log("✗ Не удалось получить список assets");
+                log(" Не удалось получить список assets");
             }
 
             // 1. Проверка и распаковка proot
@@ -75,7 +76,8 @@ public class MainActivity extends AppCompatActivity {
             if (!rootfsArchive.exists()) {
                 updateStatus("Копирование rootfs...");
                 try {
-                    copyAssetToFile("debian-rootfs.tar.gz", rootfsArchive);
+                    // ИСПРАВЛЕНО: ищем .tar вместо .tar.gz
+                    copyAssetToFile("debian-rootfs.tar", rootfsArchive);
                     log("✓ rootfs архив скопирован, размер: " + rootfsArchive.length() + " байт");
                 } catch (Exception e) {
                     log("✗ ОШИБКА копирования rootfs: " + e.getMessage());
@@ -92,8 +94,9 @@ public class MainActivity extends AppCompatActivity {
                 updateStatus("Распаковка Debian...");
                 debianDir.mkdirs();
                 
+                // ИСПРАВЛЕНО: используем -xf вместо -xzf (файл уже не сжат)
                 ProcessBuilder pb = new ProcessBuilder(
-                    "/system/bin/tar", "-xzf", 
+                    "/system/bin/tar", "-xf", 
                     rootfsArchive.getAbsolutePath(), 
                     "-C", debianDir.getAbsolutePath()
                 );
@@ -109,7 +112,7 @@ public class MainActivity extends AppCompatActivity {
                 if (tarResult == 0) {
                     log("✓ Debian rootfs распакован");
                 } else {
-                    log(" ОШИБКА: tar вернул код " + tarResult);
+                    log("✗ ОШИБКА: tar вернул код " + tarResult);
                     updateStatus("Ошибка распаковки!");
                     return;
                 }
