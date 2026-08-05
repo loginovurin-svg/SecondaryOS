@@ -18,7 +18,7 @@ else
     if wget -q --show-progress -O app/src/main/assets/proot "$ALT_URL"; then
         echo "✓ proot скачан с альтернативного источника"
     else
-        echo " Все источники недоступны. Создаём умную заглушку для тестов."
+        echo "⚠ Все источники недоступны. Создаём умную заглушку для тестов."
         # Создаём заглушку, которая имитирует поведение proot
         cat > app/src/main/assets/proot << 'PROOT_EOF'
 #!/system/bin/sh
