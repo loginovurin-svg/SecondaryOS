@@ -109,7 +109,7 @@ public class MainActivity extends AppCompatActivity {
                 if (tarResult == 0) {
                     log("✓ Debian rootfs распакован");
                 } else {
-                    log("✗ ОШИБКА: tar вернул код " + tarResult);
+                    log(" ОШИБКА: tar вернул код " + tarResult);
                     updateStatus("Ошибка распаковки!");
                     return;
                 }
