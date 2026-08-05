@@ -46,90 +46,125 @@ public class MainActivity extends AppCompatActivity {
             File prootFile = new File(filesDir, "proot");
             File debianDir = new File(filesDir, "debian");
             File statusFile = new File(filesDir, "status.txt");
+            File rootfsArchive = new File(filesDir, "debian-rootfs.tar.gz");
 
-            // 1. Распаковка proot
-            updateStatus("Распаковка proot...");
+            updateStatus("Проверка файлов...");
+            log("=== Начало диагностики ===");
+            log("filesDir: " + filesDir.getAbsolutePath());
+            log("filesDir exists: " + filesDir.exists() + ", writable: " + filesDir.canWrite());
+
+            // 1. Проверка proot
             if (!prootFile.exists()) {
-                copyAssetToFile("proot", prootFile);
-                // Выставляем права на исполнение (критично для Android)
-                Runtime.getRuntime().exec("chmod 700 " + prootFile.getAbsolutePath()).waitFor();
-                log("proot распакован и chmod 700 выполнен.");
+                updateStatus("Распаковка proot...");
+                try {
+                    copyAssetToFile("proot", prootFile);
+                    Process chmod = Runtime.getRuntime().exec("chmod 700 " + prootFile.getAbsolutePath());
+                    chmod.waitFor();
+                    log("✓ proot распакован и chmod 700 выполнен");
+                } catch (Exception e) {
+                    log("✗ Ошибка копирования proot: " + e.getMessage());
+                    updateStatus("Сбой proot!");
+                    return;
+                }
             } else {
-                log("proot уже на месте.");
+                log("✓ proot уже на месте");
             }
 
-            // 2. Распаковка rootfs
-            updateStatus("Распаковка Debian rootfs (может занять время)...");
-            if (!debianDir.exists() || !new File(debianDir, "bin/bash").exists()) {
-                debianDir.mkdirs();
-                File rootfsArchive = new File(filesDir, "debian-rootfs.tar.gz");
-                if (!rootfsArchive.exists()) {
+            // 2. Проверка rootfs архива
+            if (!rootfsArchive.exists()) {
+                updateStatus("Распаковка rootfs...");
+                log("Копирование debian-rootfs.tar.gz из assets...");
+                try {
                     copyAssetToFile("debian-rootfs.tar.gz", rootfsArchive);
+                    log("✓ rootfs архив скопирован, размер: " + rootfsArchive.length() + " байт");
+                } catch (Exception e) {
+                    log(" КРИТИЧЕСКАЯ ОШИБКА: debian-rootfs.tar.gz не найден в assets!");
+                    log("✗ Ошибка: " + e.getMessage());
+                    updateStatus("Нет rootfs!");
+                    return;
+                }
+            } else {
+                log("✓ rootfs архив уже на месте, размер: " + rootfsArchive.length());
+            }
+
+            // 3. Распаковка rootfs
+            if (!debianDir.exists() || !new File(debianDir, "bin/sh").exists()) {
+                updateStatus("Распаковка Debian...");
+                debianDir.mkdirs();
+                log("Распаковка tar.gz в " + debianDir.getAbsolutePath());
+                
+                ProcessBuilder pb = new ProcessBuilder(
+                    "/system/bin/tar", "-xzf", 
+                    rootfsArchive.getAbsolutePath(), 
+                    "-C", debianDir.getAbsolutePath()
+                );
+                Process tarProcess = pb.start();
+                
+                // Читаем ошибки tar
+                BufferedReader errorReader = new BufferedReader(new InputStreamReader(tarProcess.getErrorStream()));
+                String line;
+                while ((line = errorReader.readLine()) != null) {
+                    log("[TAR ERROR] " + line);
                 }
                 
-                // Используем системный tar для распаковки
-                Process tarProcess = Runtime.getRuntime().exec(new String[]{
-                        "/system/bin/tar", "-xzf", rootfsArchive.getAbsolutePath(), "-C", debianDir.getAbsolutePath()
-                });
                 int tarResult = tarProcess.waitFor();
                 if (tarResult == 0) {
-                    log("Debian rootfs успешно распакован.");
+                    log("✓ Debian rootfs распакован");
+                    log("Содержимое debian/bin: " + java.util.Arrays.toString(new File(debianDir, "bin").list()));
                 } else {
-                    log("ОШИБКА: tar вернул код " + tarResult);
+                    log("✗ ОШИБКА: tar вернул код " + tarResult);
                     updateStatus("Ошибка распаковки!");
                     return;
                 }
             } else {
-                log("Debian rootfs уже распакован.");
+                log("✓ Debian rootfs уже распакован");
             }
 
-            // 3. Запуск proot
+            // 4. Запуск proot
             updateStatus("Запуск контейнера...");
-            String prootCmd = prootFile.getAbsolutePath();
-            String rootfsPath = debianDir.getAbsolutePath();
-            
-            // Команда: proot -r <rootfs> -b /dev -b /proc -b /sys /bin/bash -c "echo CONTAINER_ALIVE > <status_file>"
             String[] cmd = {
-                    prootCmd,
-                    "-r", rootfsPath,
-                    "-b", "/dev", "-b", "/proc", "-b", "/sys",
-                    "/bin/bash", "-c", "echo CONTAINER_ALIVE > " + statusFile.getAbsolutePath()
+                prootFile.getAbsolutePath(),
+                "-r", debianDir.getAbsolutePath(),
+                "-b", "/dev", "-b", "/proc", "-b", "/sys",
+                "/bin/sh"
             };
 
+            log("Запуск команды: " + String.join(" ", cmd));
             ProcessBuilder pb = new ProcessBuilder(cmd);
             pb.redirectErrorStream(true);
             Process process = pb.start();
 
             // Читаем вывод
             BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()));
-            String line;
+            StringBuilder output = new StringBuilder();
             while ((line = reader.readLine()) != null) {
                 log("[PROOT] " + line);
+                output.append(line).append("\n");
             }
             
             int exitCode = process.waitFor();
-            log("Процесс proot завершен с кодом: " + exitCode);
+            log("Процесс завершён с кодом: " + exitCode);
 
-            // 4. Проверка жизни
+            // 5. Проверка результата
             if (statusFile.exists()) {
-                // Читаем файл статуса через Java, чтобы не зависеть от cat внутри proot
                 java.util.Scanner scanner = new java.util.Scanner(statusFile);
                 String content = scanner.useDelimiter("\\A").next();
                 scanner.close();
                 
                 if (content.trim().equals("CONTAINER_ALIVE")) {
                     updateStatus("УСПЕХ: Контейнер жив!");
-                    log(">>> ЭТАП 0 ПРОЙДЕН: Контейнер успешно выполнил команду. <<<");
+                    log(">>> ЭТАП 0 ПРОЙДЕН! <<<");
                 } else {
                     updateStatus("ОШИБКА: Неверный статус");
-                    log("Содержимое status.txt: " + content);
+                    log("status.txt содержит: " + content);
                 }
             } else {
                 updateStatus("ОШИБКА: status.txt не создан");
+                log("Вывод proot: " + output.toString());
             }
 
         } catch (Exception e) {
-            log("КРИТИЧЕСКАЯ ОШИБКА: " + e.getMessage());
+            log("✗ КРИТИЧЕСКАЯ ОШИБКА: " + e.getMessage());
             updateStatus("Сбой!");
             e.printStackTrace();
         }
