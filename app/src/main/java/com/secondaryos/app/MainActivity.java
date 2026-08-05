@@ -46,7 +46,7 @@ public class MainActivity extends AppCompatActivity {
             File prootFile = new File(filesDir, "proot");
             File debianDir = new File(filesDir, "debian");
             File statusFile = new File(filesDir, "status.txt");
-            // ИСПРАВЛЕНО: Android AAPT распаковывает .gz, поэтому файл называется .tar
+            // Android AAPT распаковывает .gz, поэтому файл называется .tar
             File rootfsArchive = new File(filesDir, "debian-rootfs.tar");
 
             updateStatus("Проверка файлов...");
@@ -58,7 +58,7 @@ public class MainActivity extends AppCompatActivity {
             if (assets != null) {
                 log("Файлы в assets: " + String.join(", ", assets));
             } else {
-                log(" Не удалось получить список assets");
+                log("✗ Не удалось получить список assets");
             }
 
             // 1. Проверка и распаковка proot
@@ -76,7 +76,6 @@ public class MainActivity extends AppCompatActivity {
             if (!rootfsArchive.exists()) {
                 updateStatus("Копирование rootfs...");
                 try {
-                    // ИСПРАВЛЕНО: ищем .tar вместо .tar.gz
                     copyAssetToFile("debian-rootfs.tar", rootfsArchive);
                     log("✓ rootfs архив скопирован, размер: " + rootfsArchive.length() + " байт");
                 } catch (Exception e) {
@@ -94,7 +93,7 @@ public class MainActivity extends AppCompatActivity {
                 updateStatus("Распаковка Debian...");
                 debianDir.mkdirs();
                 
-                // ИСПРАВЛЕНО: используем -xf вместо -xzf (файл уже не сжат)
+                // Используем -xf вместо -xzf (файл уже не сжат)
                 ProcessBuilder pb = new ProcessBuilder(
                     "/system/bin/tar", "-xf", 
                     rootfsArchive.getAbsolutePath(), 
@@ -120,20 +119,30 @@ public class MainActivity extends AppCompatActivity {
                 log("✓ Debian rootfs уже распакован");
             }
 
-            // 4. Запуск proot
+            // 4. Запуск proot ЧЕРЕЗ /system/bin/sh -c (обход SELinux на Samsung)
             updateStatus("Запуск контейнера...");
+            
+            // Формируем команду proot
+            String prootPath = prootFile.getAbsolutePath();
+            String rootfsPath = debianDir.getAbsolutePath();
+            String statusPath = statusFile.getAbsolutePath();
+            
+            // Оборачиваем proot в sh -c для обхода SELinux
+            String prootCmd = prootPath + 
+                " -r " + rootfsPath +
+                " -b /dev -b /proc -b /sys" +
+                " /bin/sh -c \"echo CONTAINER_ALIVE > " + statusPath + " && echo 'Minimal shell working'\"";
+            
             String[] cmd = {
-                prootFile.getAbsolutePath(),
-                "-r", debianDir.getAbsolutePath(),
-                "-b", "/dev", "-b", "/proc", "-b", "/sys",
-                "/bin/sh", "-c", "echo CONTAINER_ALIVE > " + statusFile.getAbsolutePath() + " && echo 'Minimal shell working'"
+                "/system/bin/sh", "-c", prootCmd
             };
 
-            log("Запуск: " + String.join(" ", cmd));
+            log("Запуск через sh: " + prootCmd);
             ProcessBuilder pb = new ProcessBuilder(cmd);
             pb.redirectErrorStream(true);
             Process process = pb.start();
 
+            // Читаем вывод
             BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()));
             StringBuilder output = new StringBuilder();
             String line;
