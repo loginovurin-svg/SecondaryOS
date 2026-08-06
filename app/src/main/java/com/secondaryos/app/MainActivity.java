@@ -54,7 +54,25 @@ public class MainActivity extends AppCompatActivity {
             log("=== Начало диагностики ===");
             log("nativeLibraryDir: " + getApplicationInfo().nativeLibraryDir);
             log("proot путь: " + prootPath);
-            log("proot exists: " + new File(prootPath).exists());
+            
+            File prootFile = new File(prootPath);
+            log("proot exists: " + prootFile.exists());
+            log("proot canRead: " + prootFile.canRead());
+            log("proot canExecute: " + prootFile.canExecute());
+            log("proot length: " + prootFile.length());
+            
+            if (prootFile.exists()) {
+                // Проверяем ELF-заголовок
+                try (InputStream is = new java.io.FileInputStream(prootFile)) {
+                    byte[] header = new byte[4];
+                    is.read(header);
+                    boolean isElf = (header[0] == 0x7f && header[1] == 0x45 && 
+                                   header[2] == 0x4c && header[3] == 0x46);
+                    log("proot is ELF: " + isElf);
+                } catch (Exception e) {
+                    log("Ошибка чтения proot: " + e.getMessage());
+                }
+            }
 
             // ДИАГНОСТИКА: проверяем assets
             String[] assets = getAssets().list("");
@@ -68,7 +86,7 @@ public class MainActivity extends AppCompatActivity {
                 copyAssetToFile("debian-rootfs.tar", rootfsArchive);
                 log("✓ rootfs скопирован, размер: " + rootfsArchive.length());
             } else {
-                log("✓ rootfs уже на месте");
+                log("✓ rootfs уже на месте, размер: " + rootfsArchive.length());
             }
 
             // 2. Распаковка rootfs
@@ -76,14 +94,28 @@ public class MainActivity extends AppCompatActivity {
                 updateStatus("Распаковка Debian...");
                 debianDir.mkdirs();
                 
+                log("Распаковка tar в: " + debianDir.getAbsolutePath());
                 ProcessBuilder pb = new ProcessBuilder(
                     "/system/bin/tar", "-xf",
                     rootfsArchive.getAbsolutePath(),
                     "-C", debianDir.getAbsolutePath()
                 );
-                int tarResult = pb.start().waitFor();
+                pb.redirectErrorStream(true);
+                Process tarProcess = pb.start();
+                
+                // Читаем вывод tar
+                BufferedReader tarReader = new BufferedReader(
+                    new InputStreamReader(tarProcess.getInputStream()));
+                String tarLine;
+                while ((tarLine = tarReader.readLine()) != null) {
+                    log("[TAR] " + tarLine);
+                }
+                
+                int tarResult = tarProcess.waitFor();
                 if (tarResult == 0) {
                     log("✓ Debian rootfs распакован");
+                    log("Содержимое debian/bin: " + 
+                        java.util.Arrays.toString(new File(debianDir, "bin").list()));
                 } else {
                     log("✗ tar error: " + tarResult);
                     updateStatus("Ошибка распаковки!");
@@ -105,7 +137,7 @@ public class MainActivity extends AppCompatActivity {
                 " && echo 'Minimal shell working'"
             };
 
-            log("Запуск: " + String.join(" ", cmd));
+            log("Запуск команды: " + String.join(" ", cmd));
             ProcessBuilder pb = new ProcessBuilder(cmd);
             pb.directory(filesDir);
             pb.redirectErrorStream(true);
@@ -139,7 +171,13 @@ public class MainActivity extends AppCompatActivity {
                 }
             } else {
                 updateStatus("ОШИБКА: status.txt не создан");
-                log("Вывод: " + output.toString());
+                log("Полный вывод proot: " + output.toString());
+                
+                // Дополнительная диагностика
+                log("=== Дополнительная диагностика ===");
+                log("statusFile path: " + statusFile.getAbsolutePath());
+                log("statusFile parent exists: " + statusFile.getParentFile().exists());
+                log("statusFile parent writable: " + statusFile.getParentFile().canWrite());
             }
 
         } catch (Exception e) {
