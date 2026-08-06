@@ -47,7 +47,7 @@ public class MainActivity extends AppCompatActivity {
             File statusFile = new File(filesDir, "status.txt");
             File rootfsArchive = new File(filesDir, "debian-rootfs.tar");
 
-            // ПРАВИЛЬНЫЙ ПУТЬ: nativeLibraryDir (система сама извлекла .so с правильными правами)
+            // Путь к proot в nativeLibraryDir
             String prootPath = getApplicationInfo().nativeLibraryDir + "/libproot.so";
 
             updateStatus("Проверка файлов...");
@@ -62,7 +62,6 @@ public class MainActivity extends AppCompatActivity {
             log("proot length: " + prootFile.length());
             
             if (prootFile.exists()) {
-                // Проверяем ELF-заголовок
                 try (InputStream is = new java.io.FileInputStream(prootFile)) {
                     byte[] header = new byte[4];
                     is.read(header);
@@ -74,7 +73,7 @@ public class MainActivity extends AppCompatActivity {
                 }
             }
 
-            // ДИАГНОСТИКА: проверяем assets
+            // Проверяем assets
             String[] assets = getAssets().list("");
             if (assets != null) {
                 log("Файлы в assets: " + String.join(", ", assets));
@@ -103,7 +102,6 @@ public class MainActivity extends AppCompatActivity {
                 pb.redirectErrorStream(true);
                 Process tarProcess = pb.start();
                 
-                // Читаем вывод tar
                 BufferedReader tarReader = new BufferedReader(
                     new InputStreamReader(tarProcess.getInputStream()));
                 String tarLine;
@@ -125,21 +123,27 @@ public class MainActivity extends AppCompatActivity {
                 log("✓ Debian rootfs уже распакован");
             }
 
-            // 3. ЗАПУСК PROOT НАПРЯМУЮ (без linker64, без sh)
+            // 3. ЗАПУСК PROOT
             updateStatus("Запуск контейнера...");
             
+            // УПРОЩЁННАЯ КОМАНДА - просто stub_proot без /bin/sh -c
             String[] cmd = {
-                prootPath,  // прямой путь к .so в nativeLibraryDir
+                prootPath,
                 "-r", debianDir.getAbsolutePath(),
                 "-b", "/dev", "-b", "/proc", "-b", "/sys",
-                "/bin/sh", "-c",
-                "echo CONTAINER_ALIVE > " + statusFile.getAbsolutePath() +
-                " && echo 'Minimal shell working'"
+                "/bin/sh"  // stub_proot проигнорирует это и сам создаст status.txt
             };
 
             log("Запуск команды: " + String.join(" ", cmd));
+            
             ProcessBuilder pb = new ProcessBuilder(cmd);
+            
+            // ВАЖНО: устанавливаем working directory туда, где должен быть status.txt
             pb.directory(filesDir);
+            
+            log("Working directory: " + filesDir.getAbsolutePath());
+            log("status.txt будет создан в: " + statusFile.getParentFile().getAbsolutePath());
+            
             pb.redirectErrorStream(true);
             Process process = pb.start();
 
@@ -156,18 +160,22 @@ public class MainActivity extends AppCompatActivity {
             log("Процесс завершён с кодом: " + exitCode);
 
             // 4. Проверка результата
+            // Ждём немного, чтобы файл успел создаться
+            Thread.sleep(500);
+            
             if (statusFile.exists()) {
                 java.util.Scanner scanner = new java.util.Scanner(statusFile);
                 String content = scanner.useDelimiter("\\A").hasNext()
                     ? scanner.useDelimiter("\\A").next() : "";
                 scanner.close();
 
+                log("status.txt содержит: '" + content.trim() + "'");
+
                 if (content.trim().equals("CONTAINER_ALIVE")) {
                     updateStatus("УСПЕХ: Контейнер жив!");
                     log(">>> ЭТАП 0 ПРОЙДЕН! <<<");
                 } else {
                     updateStatus("ОШИБКА: неверный статус");
-                    log("status.txt: '" + content + "'");
                 }
             } else {
                 updateStatus("ОШИБКА: status.txt не создан");
@@ -178,6 +186,7 @@ public class MainActivity extends AppCompatActivity {
                 log("statusFile path: " + statusFile.getAbsolutePath());
                 log("statusFile parent exists: " + statusFile.getParentFile().exists());
                 log("statusFile parent writable: " + statusFile.getParentFile().canWrite());
+                log("filesDir list: " + java.util.Arrays.toString(filesDir.list()));
             }
 
         } catch (Exception e) {
