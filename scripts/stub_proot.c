@@ -1,45 +1,59 @@
+/*
+ * stub_proot.c — минимальная заглушка proot (ELF aarch64)
+ * Создаёт файл status.txt в текущей working directory
+ * БЕЗ system(), БЕЗ сложных вызовов
+ */
 #include <stdio.h>
 #include <stdlib.h>
-#include <string.h>
 #include <unistd.h>
 #include <fcntl.h>
+#include <string.h>
 
 int main(int argc, char *argv[]) {
-    const char *status_path = NULL;
+    // Выводим отладку
+    printf("stub_proot: STARTED\n");
+    printf("stub_proot: argc=%d\n", argc);
+    fflush(stdout);
     
-    // Ищем путь к status.txt в аргументах
+    // Парсим аргументы (пропускаем -r, -b, но не используем их)
     for (int i = 1; i < argc; i++) {
-        if (strstr(argv[i], "status.txt")) {
-            status_path = argv[i];
-            break;
+        if (strcmp(argv[i], "-r") == 0 && i + 1 < argc) {
+            printf("stub_proot: rootfs=%s\n", argv[i + 1]);
+            i++;
+        } else if (strcmp(argv[i], "-b") == 0 && i + 1 < argc) {
+            printf("stub_proot: bind=%s\n", argv[i + 1]);
+            i++;
         }
     }
     
-    fprintf(stdout, "stub_proot: STARTED, argc=%d\n", argc);
+    // Создаём файл status.txt в текущей working directory
+    // (которую установит MainActivity через pb.directory())
+    const char *status_path = "status.txt";
+    
+    printf("stub_proot: creating %s\n", status_path);
     fflush(stdout);
     
-    if (!status_path) {
-        fprintf(stderr, "stub_proot: status.txt path not found\n");
-        return 1;
-    }
-    
-    fprintf(stdout, "stub_proot: status_path=%s\n", status_path);
-    fflush(stdout);
-    
-    // Создаём файл
     int fd = open(status_path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
     if (fd < 0) {
-        fprintf(stderr, "stub_proot: open failed\n");
+        fprintf(stderr, "stub_proot: FAILED to open %s\n", status_path);
+        perror("open");
+        fflush(stderr);
         return 1;
     }
     
     const char *msg = "CONTAINER_ALIVE\n";
-    write(fd, msg, strlen(msg));
+    ssize_t written = write(fd, msg, strlen(msg));
     close(fd);
     
-    fprintf(stdout, "stub_proot: SUCCESS\n");
-    fprintf(stdout, "Minimal shell working\n");
-    fflush(stdout);
-    
-    return 0;
+    if (written > 0) {
+        printf("stub_proot: SUCCESS - wrote %zd bytes\n", written);
+        printf("Minimal shell working\n");
+        fflush(stdout);
+        return 0;
+    } else {
+        fprintf(stderr, "stub_proot: FAILED to write\n");
+        perror("write");
+        fflush(stderr);
+        return 1;
+    }
 }
