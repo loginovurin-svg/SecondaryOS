@@ -3,20 +3,26 @@ set -e
 
 echo "=== Подготовка ассетов для Secondary OS ==="
 
-# 1. Устанавливаем кросс-компилятор для aarch64
-echo "Установка aarch64 cross-compiler..."
-sudo apt-get update -qq
-sudo apt-get install -y -qq gcc-aarch64-linux-gnu libc6-dev-arm64-cross
+# 1. Устанавливаем NDK
+echo "Установка Android NDK..."
+yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager "ndk;26.1.10909125"
+
+NDK_PATH=$ANDROID_HOME/ndk/26.1.10909125
+TOOLCHAIN=$NDK_PATH/toolchains/llvm/prebuilt/linux-x86_64
 
 # 2. Создаём папку для нативной библиотеки
 mkdir -p app/src/main/jniLibs/arm64-v8a
 
-# 3. Компилируем stub_proot как статический ELF aarch64
-echo "Компиляция stub_proot (ELF aarch64, static)..."
-aarch64-linux-gnu-gcc -static -O2 -o app/src/main/jniLibs/arm64-v8a/libproot.so scripts/stub_proot.c
+# 3. Компилируем stub_proot через NDK clang (bionic libc — совместима с Android 16)
+echo "Компиляция stub_proot через NDK..."
+$TOOLCHAIN/bin/aarch64-linux-android34-clang \
+    -O2 \
+    -o app/src/main/jniLibs/arm64-v8a/libproot.so \
+    scripts/stub_proot.c
+
 chmod 755 app/src/main/jniLibs/arm64-v8a/libproot.so
 
-# Проверяем, что это ELF
+# Проверяем
 file app/src/main/jniLibs/arm64-v8a/libproot.so
 ls -lh app/src/main/jniLibs/arm64-v8a/libproot.so
 
@@ -43,7 +49,6 @@ cd $ROOTFS_DIR
 tar -czf /tmp/debian-rootfs.tar.gz .
 cd -
 
-# Копируем rootfs в assets (proot больше не нужен в assets!)
 mkdir -p app/src/main/assets
 cp /tmp/debian-rootfs.tar.gz app/src/main/assets/
 ROOTFS_SIZE=$(ls -lh app/src/main/assets/debian-rootfs.tar.gz | awk '{print $5}')
