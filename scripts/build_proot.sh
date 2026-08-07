@@ -17,7 +17,7 @@ AR=$TOOLCHAIN/bin/llvm-ar
 RANLIB=$TOOLCHAIN/bin/llvm-ranlib
 STRIP=$TOOLCHAIN/bin/llvm-strip
 
-TALLOC_VERSION=2.4.2
+TALLOC_VERSION=2.3.3
 PROOT_VERSION=v5.3.0
 
 WORK_DIR=$PWD/build_proot_tmp
