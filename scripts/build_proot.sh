@@ -73,13 +73,14 @@ echo "  qemu test: $QEMU_OUT"
 
 if echo "$QEMU_OUT" | grep -q "qemu works"; then
     echo "  ✓ qemu работает!"
-    QEMU_CMD="qemu-aarch64-static"
     if [ "$USE_STATIC" = "0" ]; then
-        QEMU_CMD="$QEMU_CMD -L $SYSROOT"
+        CROSS_EXECUTE_CMD="qemu-aarch64-static -L $SYSROOT"
+    else
+        CROSS_EXECUTE_CMD="qemu-aarch64-static"
     fi
 else
     echo "  ✗ qemu не работает, используем cross-answers.txt"
-    QEMU_CMD=""
+    CROSS_EXECUTE_CMD=""
 fi
 
 cd $WORK_DIR
@@ -94,15 +95,26 @@ cd talloc-${TALLOC_VERSION}
 
 echo "=== Компилируем talloc ==="
 
-if [ -n "$QEMU_CMD" ]; then
+CFLAGS="-O2 -fPIC --target=aarch64-linux-android34 -D_FILE_OFFSET_BITS=64 -D_GNU_SOURCE"
+LDFLAGS="--target=aarch64-linux-android34"
+
+if [ -n "$CROSS_EXECUTE_CMD" ]; then
     echo "Режим: qemu cross-execute"
-    CONFIGURE_OPTS="--cross-compile --cross-execute=\"$QEMU_CMD\""
-    CFLAGS="-O2 -fPIC --target=aarch64-linux-android34 -D_FILE_OFFSET_BITS=64 -D_GNU_SOURCE"
-    LDFLAGS="--target=aarch64-linux-android34"
     if [ "$USE_STATIC" = "1" ]; then
         CFLAGS="$CFLAGS -static"
         LDFLAGS="$LDFLAGS -static"
     fi
+    
+    # КЛЮЧЕВОЕ ИСПРАВЛЕНИЕ: передаём --cross-execute напрямую, без кавычек в переменной
+    CC="$CC" AR="$AR" RANLIB="$RANLIB" \
+    CFLAGS="$CFLAGS" \
+    LDFLAGS="$LDFLAGS" \
+    ./configure \
+        --cross-compile \
+        --cross-execute="$CROSS_EXECUTE_CMD" \
+        --prefix=$WORK_DIR/talloc_install \
+        --disable-python \
+        --disable-rpath-install
 else
     echo "Режим: cross-answers.txt"
     cat > cross-answers.txt <<'ENDANSWERS'
@@ -538,19 +550,17 @@ Checking for member sa_len in struct sockaddr: NO
 Checking for member sin_len in struct sockaddr_in: NO
 Checking for member sin6_len in struct sockaddr_in6: NO
 ENDANSWERS
-    CONFIGURE_OPTS="--cross-compile --cross-answers=$PWD/cross-answers.txt"
-    CFLAGS="-O2 -fPIC --target=aarch64-linux-android34 -D_FILE_OFFSET_BITS=64 -D_GNU_SOURCE"
-    LDFLAGS="--target=aarch64-linux-android34"
+    
+    CC="$CC" AR="$AR" RANLIB="$RANLIB" \
+    CFLAGS="$CFLAGS" \
+    LDFLAGS="$LDFLAGS" \
+    ./configure \
+        --cross-compile \
+        --cross-answers=$PWD/cross-answers.txt \
+        --prefix=$WORK_DIR/talloc_install \
+        --disable-python \
+        --disable-rpath-install
 fi
-
-CC="$CC" AR="$AR" RANLIB="$RANLIB" \
-CFLAGS="$CFLAGS" \
-LDFLAGS="$LDFLAGS" \
-./configure \
-    $CONFIGURE_OPTS \
-    --prefix=$WORK_DIR/talloc_install \
-    --disable-python \
-    --disable-rpath-install
 
 make -j$(nproc)
 make install
