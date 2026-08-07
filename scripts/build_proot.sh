@@ -35,13 +35,13 @@ if ! command -v qemu-aarch64-static &> /dev/null; then
 fi
 echo "qemu-aarch64-static: $(qemu-aarch64-static --version 2>&1 | head -1)"
 
-# Создаём wrapper-скрипт для qemu
-# Это решает проблему с парсингом аргументов waf
-cat > $WORK_DIR/qemu_wrapper.sh <<'EOF'
+# Создаём wrapper-скрипт с АБСОЛЮТНЫМ путём
+QEMU_WRAPPER=$WORK_DIR/qemu_wrapper.sh
+cat > $QEMU_WRAPPER <<EOF
 #!/bin/bash
-exec /usr/bin/qemu-aarch64-static "$@"
+exec /usr/bin/qemu-aarch64-static "\$@"
 EOF
-chmod +x $WORK_DIR/qemu_wrapper.sh
+chmod +x $QEMU_WRAPPER
 
 mkdir -p $SYSROOT/system/lib64
 mkdir -p $SYSROOT/system/bin
@@ -108,18 +108,19 @@ if [ "$USE_STATIC" = "1" ]; then
 fi
 
 if [ "$USE_QEMU" = "1" ]; then
-    echo "Режим: qemu cross-execute (через wrapper)"
+    echo "Режим: qemu cross-execute (абсолютный путь)"
+    echo "  Wrapper: $QEMU_WRAPPER"
     
-    # Копируем wrapper в текущую директорию
-    cp $WORK_DIR/qemu_wrapper.sh ./qemu_wrapper.sh
-    chmod +x ./qemu_wrapper.sh
+    # Проверяем, что wrapper работает
+    echo "  Тест wrapper'а..."
+    $QEMU_WRAPPER $WORK_DIR/test_qemu || echo "  ✗ wrapper не работает!"
     
     CC="$CC" AR="$AR" RANLIB="$RANLIB" \
     CFLAGS="$CFLAGS" \
     LDFLAGS="$LDFLAGS" \
     ./configure \
         --cross-compile \
-        --cross-execute=./qemu_wrapper.sh \
+        --cross-execute="$QEMU_WRAPPER" \
         --prefix=$WORK_DIR/talloc_install \
         --disable-python \
         --disable-rpath-install
