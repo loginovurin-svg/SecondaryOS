@@ -33,9 +33,7 @@ if ! command -v qemu-aarch64-static &> /dev/null; then
     sudo apt-get update -qq
     sudo apt-get install -y -qq qemu-user-static
 fi
-echo "qemu-aarch64-static: $(qemu-aarch64-static --version 2>&1 | head -1)"
 
-# Создаём wrapper-скрипт с АБСОЛЮТНЫМ путём
 QEMU_WRAPPER=$WORK_DIR/qemu_wrapper.sh
 cat > $QEMU_WRAPPER <<EOF
 #!/bin/bash
@@ -50,13 +48,11 @@ for lib in libc.so libm.so libdl.so liblog.so; do
     src=$(find $SYSROOT/usr/lib/aarch64-linux-android -name "$lib" 2>/dev/null | head -1)
     if [ -n "$src" ] && [ ! -e $SYSROOT/system/lib64/$lib ]; then
         ln -sf "$src" $SYSROOT/system/lib64/$lib
-        echo "  symlink: $lib"
     fi
 done
 
 ld_src=$(find $SYSROOT/usr/lib/aarch64-linux-android -name "ld-android.so" 2>/dev/null | head -1)
 if [ -z "$ld_src" ]; then
-    echo "ld-android.so не найден, используем статическую линковку"
     USE_STATIC=1
 else
     if [ ! -e $SYSROOT/system/bin/linker64 ]; then
@@ -77,13 +73,10 @@ else
     $CC --target=aarch64-linux-android34 -o $WORK_DIR/test_qemu $WORK_DIR/test_qemu.c
     QEMU_OUT=$(qemu-aarch64-static -L $SYSROOT $WORK_DIR/test_qemu 2>&1) || true
 fi
-echo "  qemu test: $QEMU_OUT"
 
 if echo "$QEMU_OUT" | grep -q "qemu works"; then
-    echo "  ✓ qemu работает!"
     USE_QEMU=1
 else
-    echo "  ✗ qemu не работает, используем cross-answers.txt"
     USE_QEMU=0
 fi
 
@@ -107,26 +100,8 @@ if [ "$USE_STATIC" = "1" ]; then
     LDFLAGS="$LDFLAGS -static"
 fi
 
-if [ "$USE_QEMU" = "1" ]; then
-    echo "Режим: qemu cross-execute (абсолютный путь)"
-    echo "  Wrapper: $QEMU_WRAPPER"
-    
-    # Проверяем, что wrapper работает
-    echo "  Тест wrapper'а..."
-    $QEMU_WRAPPER $WORK_DIR/test_qemu || echo "  ✗ wrapper не работает!"
-    
-    CC="$CC" AR="$AR" RANLIB="$RANLIB" \
-    CFLAGS="$CFLAGS" \
-    LDFLAGS="$LDFLAGS" \
-    ./configure \
-        --cross-compile \
-        --cross-execute="$QEMU_WRAPPER" \
-        --prefix=$WORK_DIR/talloc_install \
-        --disable-python \
-        --disable-rpath-install
-else
-    echo "Режим: cross-answers.txt"
-    cat > cross-answers.txt <<'ENDANSWERS'
+# Создаём ПОЛНЫЙ cross-answers.txt
+cat > cross-answers.txt <<'ENDANSWERS'
 Checking uname sysname type: "Linux"
 Checking uname machine type: "aarch64"
 Checking uname release type: "5.15.0-android"
@@ -135,7 +110,7 @@ Checking for rpath library support: NO
 Checking for -Wl,--version-script support: YES
 Checking getconf LFS_CFLAGS: NO
 Checking for large file support without additional flags: YES
-Checking for -D_FILE_OFFSET_BITS=64: NO
+Checking for -D_FILE_OFFSET_BITS=64: YES
 Checking for -D_LARGE_FILES: NO
 Checking if signal handlers return int: YES
 Checking correct behavior of strtoll: YES
@@ -558,8 +533,85 @@ Checking for member __ss_family in struct sockaddr_storage: NO
 Checking for member sa_len in struct sockaddr: NO
 Checking for member sin_len in struct sockaddr_in: NO
 Checking for member sin6_len in struct sockaddr_in6: NO
+Checking if size of bool == 1: YES
+Checking if size of char == 1: YES
+Checking if size of int == 1: NO
+Checking if size of int == 2: NO
+Checking if size of int == 4: YES
+Checking if size of long long == 1: NO
+Checking if size of long long == 2: NO
+Checking if size of long long == 4: NO
+Checking if size of long long == 8: YES
+Checking if size of long == 1: NO
+Checking if size of long == 2: NO
+Checking if size of long == 4: NO
+Checking if size of long == 8: YES
+Checking if size of short == 1: NO
+Checking if size of short == 2: YES
+Checking if size of size_t == 1: NO
+Checking if size of size_t == 2: NO
+Checking if size of size_t == 4: NO
+Checking if size of size_t == 8: YES
+Checking if size of ssize_t == 1: NO
+Checking if size of ssize_t == 2: NO
+Checking if size of ssize_t == 4: NO
+Checking if size of ssize_t == 8: YES
+Checking if size of int8_t == 1: YES
+Checking if size of uint8_t == 1: YES
+Checking if size of int16_t == 1: NO
+Checking if size of int16_t == 2: YES
+Checking if size of uint16_t == 1: NO
+Checking if size of uint16_t == 2: YES
+Checking if size of int32_t == 1: NO
+Checking if size of int32_t == 2: NO
+Checking if size of int32_t == 4: YES
+Checking if size of uint32_t == 1: NO
+Checking if size of uint32_t == 2: NO
+Checking if size of uint32_t == 4: YES
+Checking if size of int64_t == 1: NO
+Checking if size of int64_t == 2: NO
+Checking if size of int64_t == 4: NO
+Checking if size of int64_t == 8: YES
+Checking if size of uint64_t == 1: NO
+Checking if size of uint64_t == 2: NO
+Checking if size of uint64_t == 4: NO
+Checking if size of uint64_t == 8: YES
+Checking if size of void* == 1: NO
+Checking if size of void* == 2: NO
+Checking if size of void* == 4: NO
+Checking if size of void* == 8: YES
+Checking if size of off_t == 1: NO
+Checking if size of off_t == 2: NO
+Checking if size of off_t == 4: NO
+Checking if size of off_t == 8: YES
+Checking if size of dev_t == 1: NO
+Checking if size of dev_t == 2: NO
+Checking if size of dev_t == 4: NO
+Checking if size of dev_t == 8: YES
+Checking if size of ino_t == 1: NO
+Checking if size of ino_t == 2: NO
+Checking if size of ino_t == 4: NO
+Checking if size of ino_t == 8: YES
+Checking if size of time_t == 1: NO
+Checking if size of time_t == 2: NO
+Checking if size of time_t == 4: NO
+Checking if size of time_t == 8: YES
 ENDANSWERS
-    
+
+if [ "$USE_QEMU" = "1" ]; then
+    echo "Режим: qemu + cross-answers"
+    CC="$CC" AR="$AR" RANLIB="$RANLIB" \
+    CFLAGS="$CFLAGS" \
+    LDFLAGS="$LDFLAGS" \
+    ./configure \
+        --cross-compile \
+        --cross-execute="$QEMU_WRAPPER" \
+        --cross-answers=$PWD/cross-answers.txt \
+        --prefix=$WORK_DIR/talloc_install \
+        --disable-python \
+        --disable-rpath-install
+else
+    echo "Режим: только cross-answers"
     CC="$CC" AR="$AR" RANLIB="$RANLIB" \
     CFLAGS="$CFLAGS" \
     LDFLAGS="$LDFLAGS" \
@@ -576,7 +628,6 @@ make install
 
 TALLOC_DIR=$WORK_DIR/talloc_install
 echo "=== talloc собран! ==="
-ls -la $TALLOC_DIR/lib/
 
 cd $WORK_DIR
 
@@ -599,9 +650,6 @@ make -j$(nproc) \
     proot
 
 $STRIP proot
-
-echo "=== proot собран! ==="
-file proot || true
 ls -lh proot
 
 echo ""
@@ -612,11 +660,9 @@ DEST_DIR=$PWD/../../../app/src/main/jniLibs/arm64-v8a
 mkdir -p $DEST_DIR
 cp proot $DEST_DIR/libproot.so
 
-echo "=== Готово! ==="
 ls -lh $DEST_DIR/libproot.so
 
 cd ../../..
 rm -rf build_proot_tmp
 
-echo ""
 echo "=== Сборка proot завершена успешно ==="
