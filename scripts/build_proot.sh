@@ -52,6 +52,7 @@ echo "=== Компилируем talloc ==="
 # cross-answers.txt — ответы на ВСЕ runtime-проверки waf,
 # которые невозможно выполнить при кросс-компиляции.
 # Формат: "<текст вопроса из лога>: <ответ>"
+# ВАЖНО: не должно быть дублей с конфликтующими ответами!
 cat > cross-answers.txt <<'ENDANSWERS'
 Checking uname sysname type: "Linux"
 Checking uname machine type: "aarch64"
@@ -81,6 +82,7 @@ Checking whether we have ucontext_t: OK
 Checking whether xattr interface takes additional options: NO
 Checking for comparison_fn_t: NO
 Checking C prototype for gettimeofday: OK
+Checking C prototype for dlopen: OK
 Checking simple C program: OK
 Checking for library constructor support: OK
 Checking for library destructor support: OK
@@ -239,6 +241,7 @@ Checking for getpwnam_r: OK
 Checking for getpwuid_r: OK
 Checking for copy_file_range: OK
 Checking for getxattr: OK
+Checking for getauxval: OK
 Checking for declaration of dlopen: OK
 Checking for declaration of fdatasync: OK
 Checking for declaration of snprintf: OK
@@ -262,6 +265,11 @@ Checking for member ss_family in struct sockaddr_storage: OK
 Checking for getprogname: OK
 Checking for variable __FUNCTION__: OK
 Checking for va_copy: OK
+Checking for HAVE_IFACE_GETIFADDRS: YES
+Checking for HAVE_IFACE_AIX: NO
+Checking for HAVE_IFACE_IFCONF: YES
+Checking for HAVE_IFACE_IFREQ: YES
+Checking for XSI (rather than GNU) prototype for strerror_r: NO
 Checking for header sys/utsname.h: YES
 Checking for header stdio.h: YES
 Checking for header sys/types.h: YES
@@ -352,6 +360,7 @@ Checking for header sys/cdefs.h: YES
 Checking for header net/if.h: YES
 Checking for header arpa/nameser.h: YES
 Checking for header resolv.h: YES
+Checking for header sys/auxv.h: YES
 Checking for res_search: OK
 Checking for header security/pam_appl.h: NO
 Checking for header crypt.h: NO
@@ -456,20 +465,6 @@ Checking for strtoq: NO
 Checking for variable rl_event_hook: NO
 Checking for variable program_invocation_short_name: NO
 Checking for atomic_add_32 compiler builtin: NO
-Checking for siggetmask: NO
-Checking for memset_s: NO
-Checking for shl_load: NO
-Checking for shl_unload: NO
-Checking for shl_findsym: NO
-Checking for chsize: NO
-Checking for __strtoull: NO
-Checking for strtouq: NO
-Checking for __strtoll: NO
-Checking for strtoq: NO
-Checking for variable rl_event_hook: NO
-Checking for variable program_invocation_short_name: NO
-Checking for atomic_add_32 compiler builtin: NO
-Checking for siggetmask: NO
 Checking for declaration of dgettext: NO
 Checking for declaration of dgettext (as enum): NO
 Checking for declaration of gettext: NO
@@ -490,13 +485,6 @@ Checking for member __ss_family in struct sockaddr_storage: NO
 Checking for member sa_len in struct sockaddr: NO
 Checking for member sin_len in struct sockaddr_in: NO
 Checking for member sin6_len in struct sockaddr_in6: NO
-Checking for C99 vsnprintf: NO
-Checking for HAVE_SHARED_MMAP: NO
-Checking for HAVE_MREMAP: NO
-Checking for HAVE_INCOHERENT_MMAP: NO
-Checking for HAVE_SECURE_MKSTEMP: NO
-Checking for declaration of dlopen: NO
-Checking for C prototype for dlopen: NO
 ENDANSWERS
 
 # Запускаем configure talloc с кросс-компиляцией
