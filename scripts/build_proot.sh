@@ -35,6 +35,14 @@ if ! command -v qemu-aarch64-static &> /dev/null; then
 fi
 echo "qemu-aarch64-static: $(qemu-aarch64-static --version 2>&1 | head -1)"
 
+# Создаём wrapper-скрипт для qemu
+# Это решает проблему с парсингом аргументов waf
+cat > $WORK_DIR/qemu_wrapper.sh <<'EOF'
+#!/bin/bash
+exec /usr/bin/qemu-aarch64-static "$@"
+EOF
+chmod +x $WORK_DIR/qemu_wrapper.sh
+
 mkdir -p $SYSROOT/system/lib64
 mkdir -p $SYSROOT/system/bin
 
@@ -73,14 +81,10 @@ echo "  qemu test: $QEMU_OUT"
 
 if echo "$QEMU_OUT" | grep -q "qemu works"; then
     echo "  ✓ qemu работает!"
-    if [ "$USE_STATIC" = "0" ]; then
-        CROSS_EXECUTE_CMD="qemu-aarch64-static -L $SYSROOT"
-    else
-        CROSS_EXECUTE_CMD="qemu-aarch64-static"
-    fi
+    USE_QEMU=1
 else
     echo "  ✗ qemu не работает, используем cross-answers.txt"
-    CROSS_EXECUTE_CMD=""
+    USE_QEMU=0
 fi
 
 cd $WORK_DIR
@@ -98,20 +102,24 @@ echo "=== Компилируем talloc ==="
 CFLAGS="-O2 -fPIC --target=aarch64-linux-android34 -D_FILE_OFFSET_BITS=64 -D_GNU_SOURCE"
 LDFLAGS="--target=aarch64-linux-android34"
 
-if [ -n "$CROSS_EXECUTE_CMD" ]; then
-    echo "Режим: qemu cross-execute"
-    if [ "$USE_STATIC" = "1" ]; then
-        CFLAGS="$CFLAGS -static"
-        LDFLAGS="$LDFLAGS -static"
-    fi
+if [ "$USE_STATIC" = "1" ]; then
+    CFLAGS="$CFLAGS -static"
+    LDFLAGS="$LDFLAGS -static"
+fi
+
+if [ "$USE_QEMU" = "1" ]; then
+    echo "Режим: qemu cross-execute (через wrapper)"
     
-    # КЛЮЧЕВОЕ ИСПРАВЛЕНИЕ: передаём --cross-execute напрямую, без кавычек в переменной
+    # Копируем wrapper в текущую директорию
+    cp $WORK_DIR/qemu_wrapper.sh ./qemu_wrapper.sh
+    chmod +x ./qemu_wrapper.sh
+    
     CC="$CC" AR="$AR" RANLIB="$RANLIB" \
     CFLAGS="$CFLAGS" \
     LDFLAGS="$LDFLAGS" \
     ./configure \
         --cross-compile \
-        --cross-execute="$CROSS_EXECUTE_CMD" \
+        --cross-execute=./qemu_wrapper.sh \
         --prefix=$WORK_DIR/talloc_install \
         --disable-python \
         --disable-rpath-install
