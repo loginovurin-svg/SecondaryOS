@@ -17,12 +17,18 @@ import org.apache.commons.compress.archivers.tar.TarArchiveInputStream;
 import org.apache.commons.compress.compressors.xz.XZCompressorInputStream;
 
 import java.io.BufferedInputStream;
+import java.io.BufferedReader;
+import java.io.BufferedWriter;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
+import java.io.FileWriter;
 import java.io.InputStream;
+import java.io.InputStreamReader;
 import java.nio.file.Files;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Deque;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -105,43 +111,43 @@ public class MainActivity extends Activity {
             log("Rootfs уже распакован.");
         }
 
-        // Writable-каталог для proot и для гостевого /tmp
         File tmpDir = new File(getFilesDir(), "tmp");
         tmpDir.mkdirs();
-        log("PROOT_TMP_DIR: " + tmpDir.getAbsolutePath());
 
-        // Тест A: прямой запуск ELF без оболочки
+        // Тест A: ПОЛНЫЙ verbose-лог proot, пишем в файл,
+        // на экран выводим только хвост
         List<String> a = new ArrayList<>();
         a.add("/usr/bin/uname"); a.add("-a");
-        testLaunch(proot, rootfs, tmpDir, "A(uname)", a);
+        testLaunch(proot, rootfs, tmpDir, "A", a, 9);
 
-        // Тест B: sh
+        // Тест B: sh без verbose
         List<String> b = new ArrayList<>();
         b.add("/bin/sh"); b.add("-c"); b.add("echo SH_OK");
-        testLaunch(proot, rootfs, tmpDir, "B(sh)", b);
-
-        // Тест C: bash
-        List<String> c = new ArrayList<>();
-        c.add("/bin/bash"); c.add("-c"); c.add("echo BASH_OK");
-        testLaunch(proot, rootfs, tmpDir, "C(bash)", c);
+        testLaunch(proot, rootfs, tmpDir, "B", b, 0);
 
         log("=== Диагностика завершена ===");
+        log("Прокрути вверх: нужен ХВОСТ теста A.");
     }
 
-    // Один тестовый запуск proot с гостевой командой
+    // Запуск proot. verboseLevel=9 пишет полный лог в файл
+    // и показывает на экране последние 50 строк.
     private void testLaunch(File proot, File rootfs, File tmpDir,
-                            String tag, List<String> guestCmd) throws Exception {
+                            String fileKey, List<String> guestCmd,
+                            int verboseLevel) throws Exception {
         List<String> cmd = new ArrayList<>();
         cmd.add(proot.getAbsolutePath());
+        if (verboseLevel > 0) {
+            cmd.add("-v");
+            cmd.add(String.valueOf(verboseLevel));
+        }
         cmd.add("-r"); cmd.add(rootfs.getAbsolutePath());
         cmd.add("-b"); cmd.add("/dev");
         cmd.add("-b"); cmd.add("/proc");
         cmd.add("-b"); cmd.add("/sys");
-        // Даём гостю writable /tmp
         cmd.add("-b"); cmd.add(tmpDir.getAbsolutePath() + ":/tmp");
         cmd.addAll(guestCmd);
 
-        log("--- Тест " + tag + " ---");
+        log("--- Тест " + fileKey + " ---");
 
         ProcessBuilder pb = new ProcessBuilder(cmd);
         pb.directory(rootfs);
@@ -150,24 +156,37 @@ public class MainActivity extends Activity {
         pb.environment().put("TERM", "xterm");
         pb.environment().put("PATH",
                 "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin");
-        // Без этого proot не может создать временный файл
         pb.environment().put("PROOT_TMP_DIR", tmpDir.getAbsolutePath());
-        // ВАЖНО: отключаем rseq в glibc Debian 12,
-        // иначе старый proot 5.3.0 молча роняет гостя (известный баг)
         pb.environment().put("GLIBC_TUNABLES",
                 "glibc.rseq=0:glibc.pthread.rseq=0");
 
         Process p = pb.start();
-        try (InputStream in = p.getInputStream()) {
-            java.io.BufferedReader br =
-                    new java.io.BufferedReader(new java.io.InputStreamReader(in));
+
+        File outFile = new File(getFilesDir(), "proot_log_" + fileKey + ".txt");
+        Deque<String> tail = new ArrayDeque<>();
+        int total = 0;
+
+        try (BufferedWriter bw = new BufferedWriter(new FileWriter(outFile));
+             BufferedReader br = new BufferedReader(
+                     new InputStreamReader(p.getInputStream()))) {
             String line;
             while ((line = br.readLine()) != null) {
-                log("[" + tag + "] " + line);
+                bw.write(line);
+                bw.newLine();
+                total++;
+                tail.addLast(line);
+                if (tail.size() > 50) tail.removeFirst();
             }
         }
+
         int code = p.waitFor();
-        log("Тест " + tag + " код выхода: " + code);
+        log("Тест " + fileKey + " код выхода: " + code +
+                ", всего строк: " + total +
+                ", файл: " + outFile.getName());
+        log("--- ХВОСТ теста " + fileKey + " ---");
+        for (String l : tail) {
+            log("[" + fileKey + "] " + l);
+        }
     }
 
     private File prepareProot() throws Exception {
@@ -221,7 +240,6 @@ public class MainActivity extends Activity {
                         log("symlink ошибка: " + name);
                     }
                 } else if (entry.isLink()) {
-                    // hardlink, при неудаче — копируем файл целиком
                     out.getParentFile().mkdirs();
                     String target = entry.getLinkName();
                     while (target.startsWith("./")) target = target.substring(2);
