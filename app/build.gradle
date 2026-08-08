@@ -10,38 +10,29 @@ android {
         applicationId "com.secondaryos.app"
         minSdk 26
         targetSdk 34
-        versionCode 4  // ← УВЕЛИЧЕНО ДО 3
-        versionName "0.1.3"
-        
+        versionCode 1
+        versionName "0.1"
+
+        // Только arm64 — целевое устройство Galaxy A15 (Helio G99)
         ndk {
             abiFilters 'arm64-v8a'
         }
     }
 
-    // ЯВНО УКАЗЫВАЕМ ПУТЬ К НАТИВНЫМ БИБЛИОТЕКАМ
-    sourceSets {
-        main {
-            jniLibs.srcDirs = ['src/main/jniLibs']
+    buildTypes {
+        release {
+            minifyEnabled false
         }
     }
 
-    // ЯВНО УКАЗЫВАЕМ, ЧТО .so ФАЙЛЫ НЕЛЬЗЯ СЖИМАТЬ
+    // ВАЖНО: заставляет Android распаковывать .so из jniLibs на диск
+    // в nativeLibraryDir. Без этого libproot.so нельзя будет выполнить.
     packagingOptions {
         jniLibs {
             useLegacyPackaging = true
         }
     }
 
-    aaptOptions {
-        noCompress "tar.gz", "gz", "tar", "sh", "so"
-    }
-
-    buildTypes {
-        release {
-            minifyEnabled false
-            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
-        }
-    }
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_17
         targetCompatibility JavaVersion.VERSION_17
@@ -49,6 +40,7 @@ android {
 }
 
 dependencies {
-    implementation 'androidx.appcompat:appcompat:1.6.1'
-    implementation 'androidx.constraintlayout:constraintlayout:2.1.4'
+    // Распаковка tar.xz внутри приложения
+    implementation 'org.apache.commons:commons-compress:1.26.2'
+    implementation 'org.tukaani:xz:1.9'
 }
