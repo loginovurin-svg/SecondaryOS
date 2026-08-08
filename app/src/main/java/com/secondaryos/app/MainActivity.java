@@ -105,6 +105,11 @@ public class MainActivity extends Activity {
             log("Rootfs уже распакован.");
         }
 
+        // Writable-каталог для proot и для гостевого /tmp
+        File tmpDir = new File(getFilesDir(), "tmp");
+        tmpDir.mkdirs();
+        log("PROOT_TMP_DIR: " + tmpDir.getAbsolutePath());
+
         // Проверка ключевых файлов с хост-стороны
         checkFile(rootfs, "bin");
         checkFile(rootfs, "lib");
@@ -116,17 +121,17 @@ public class MainActivity extends Activity {
         // Тест A: прямой запуск ELF без оболочки
         List<String> a = new ArrayList<>();
         a.add("/usr/bin/uname"); a.add("-a");
-        testLaunch(proot, rootfs, "A(uname)", a);
+        testLaunch(proot, rootfs, tmpDir, "A(uname)", a);
 
         // Тест B: sh
         List<String> b = new ArrayList<>();
         b.add("/bin/sh"); b.add("-c"); b.add("echo SH_OK");
-        testLaunch(proot, rootfs, "B(sh)", b);
+        testLaunch(proot, rootfs, tmpDir, "B(sh)", b);
 
         // Тест C: bash
         List<String> c = new ArrayList<>();
         c.add("/bin/bash"); c.add("-c"); c.add("echo BASH_OK");
-        testLaunch(proot, rootfs, "C(bash)", c);
+        testLaunch(proot, rootfs, tmpDir, "C(bash)", c);
 
         log("=== Диагностика завершена ===");
     }
@@ -143,14 +148,16 @@ public class MainActivity extends Activity {
     }
 
     // Один тестовый запуск proot с гостевой командой
-    private void testLaunch(File proot, File rootfs, String tag,
-                            List<String> guestCmd) throws Exception {
+    private void testLaunch(File proot, File rootfs, File tmpDir,
+                            String tag, List<String> guestCmd) throws Exception {
         List<String> cmd = new ArrayList<>();
         cmd.add(proot.getAbsolutePath());
         cmd.add("-r"); cmd.add(rootfs.getAbsolutePath());
         cmd.add("-b"); cmd.add("/dev");
         cmd.add("-b"); cmd.add("/proc");
         cmd.add("-b"); cmd.add("/sys");
+        // Даём гостю writable /tmp
+        cmd.add("-b"); cmd.add(tmpDir.getAbsolutePath() + ":/tmp");
         cmd.addAll(guestCmd);
 
         log("--- Тест " + tag + " ---");
@@ -162,6 +169,8 @@ public class MainActivity extends Activity {
         pb.environment().put("TERM", "xterm");
         pb.environment().put("PATH",
                 "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin");
+        // ВАЖНО: без этого proot не может создать временный файл
+        pb.environment().put("PROOT_TMP_DIR", tmpDir.getAbsolutePath());
 
         Process p = pb.start();
         try (InputStream in = p.getInputStream()) {
