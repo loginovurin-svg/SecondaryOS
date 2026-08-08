@@ -80,8 +80,9 @@ if [[ -z "$ROOTFS_URL" ]]; then
     echo "ROOTFS_URL не задан. Ищу последний rootfs на images.linuxcontainers.org..."
     ROOTFS_BASE_URL="https://images.linuxcontainers.org/images/debian/bookworm/arm64/default"
     
-    # Получаем список папок с датами, берем последнюю
-    LATEST_DIR=$(curl -fsSL "$ROOTFS_BASE_URL/" | grep -oP '(?<=href=")[0-9]{8}_[0-9]{2}:[0-9]{2}' | sort | tail -n 1)
+    # Получаем список папок с датами, берем последнюю.
+    # Сервер кодирует двоеточие как %3A в HTML, поэтому ищем %3A.
+    LATEST_DIR=$(curl -fsSL "$ROOTFS_BASE_URL/" | grep -oP '(?<=href=")[0-9]{8}_[0-9]{2}%3A[0-9]{2}' | sort | tail -n 1)
     
     if [[ -z "$LATEST_DIR" ]]; then
         echo "ОШИБКА: не удалось найти последнюю папку с rootfs на images.linuxcontainers.org"
