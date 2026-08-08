@@ -18,10 +18,13 @@ import org.apache.commons.compress.compressors.xz.XZCompressorInputStream;
 
 import java.io.BufferedInputStream;
 import java.io.File;
+import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.InputStream;
+import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 public class MainActivity extends Activity {
@@ -32,14 +35,12 @@ public class MainActivity extends Activity {
     private TextView logView;
     private Button startButton;
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
-    private final java.util.concurrent.ExecutorService executor =
-            Executors.newSingleThreadExecutor();
+    private final ExecutorService executor = Executors.newSingleThreadExecutor();
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
 
-        // Строим простой интерфейс кодом, без layout-файла
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
         root.setPadding(24, 24, 24, 24);
@@ -63,7 +64,6 @@ public class MainActivity extends Activity {
         startButton.setOnClickListener(v -> startLinux());
     }
 
-    // Вывод строки на экран и в logcat
     private void log(String msg) {
         Log.i(TAG, msg);
         mainHandler.post(() -> logView.append(msg + "\n"));
@@ -73,7 +73,7 @@ public class MainActivity extends Activity {
         startButton.setEnabled(false);
         executor.execute(() -> {
             try {
-                runContainer();
+                runDiagnostics();
             } catch (Throwable t) {
                 log("✗ КРИТИЧЕСКАЯ ОШИБКА: " + t);
                 Log.e(TAG, "fatal", t);
@@ -83,91 +83,105 @@ public class MainActivity extends Activity {
         });
     }
 
-    private void runContainer() throws Exception {
+    private void runDiagnostics() throws Exception {
         log("=== Начало диагностики ===");
 
-        // 1. Готовим proot (предпочитаем libproot.so из nativeLibraryDir)
         File proot = prepareProot();
-        log("proot путь: " + proot.getAbsolutePath());
-        log("proot exists: " + proot.exists() +
-                ", canExecute: " + proot.canExecute() +
-                ", length: " + proot.length());
+        log("proot: " + proot.getAbsolutePath() +
+                " exists=" + proot.exists() +
+                " exec=" + proot.canExecute());
 
-        if (!proot.exists() || proot.length() == 0) {
-            log("✗ proot не найден или пустой");
-            return;
-        }
-
-        // 2. Распаковываем rootfs, если ещё не распакован
         File rootfs = new File(getFilesDir(), "debian");
         File marker = new File(getFilesDir(), ".secondaryos_installed");
-
         String markerText = marker.exists() ? readFile(marker) : "";
+
         if (!markerText.equals(String.valueOf(INSTALL_VERSION)) || !rootfs.exists()) {
-            log("Распаковываю rootfs (это может занять несколько минут)...");
+            log("Распаковываю rootfs...");
             if (rootfs.exists()) deleteRecursively(rootfs);
             extractRootfs(rootfs);
             writeFile(marker, String.valueOf(INSTALL_VERSION));
             log("Rootfs распакован.");
         } else {
-            log("Rootfs уже распакован, пропускаю.");
+            log("Rootfs уже распакован.");
         }
 
-        // 3. Запускаем контейнер с тестовой командой
-        File tmpDir = new File(getFilesDir(), "tmp");
-        tmpDir.mkdirs();
+        // Проверка ключевых файлов с хост-стороны
+        checkFile(rootfs, "bin");
+        checkFile(rootfs, "lib");
+        checkFile(rootfs, "usr/bin/bash");
+        checkFile(rootfs, "usr/bin/dash");
+        checkFile(rootfs, "lib/ld-linux-aarch64.so.1");
+        checkFile(rootfs, "usr/lib/ld-linux-aarch64.so.1");
 
+        // Тест A: прямой запуск ELF без оболочки
+        List<String> a = new ArrayList<>();
+        a.add("/usr/bin/uname"); a.add("-a");
+        testLaunch(proot, rootfs, "A(uname)", a);
+
+        // Тест B: sh
+        List<String> b = new ArrayList<>();
+        b.add("/bin/sh"); b.add("-c"); b.add("echo SH_OK");
+        testLaunch(proot, rootfs, "B(sh)", b);
+
+        // Тест C: bash
+        List<String> c = new ArrayList<>();
+        c.add("/bin/bash"); c.add("-c"); c.add("echo BASH_OK");
+        testLaunch(proot, rootfs, "C(bash)", c);
+
+        log("=== Диагностика завершена ===");
+    }
+
+    // Печатает существование/права/длину файла внутри rootfs
+    private void checkFile(File rootfs, String rel) {
+        File f = new File(rootfs, rel);
+        log("Проверка " + rel +
+                ": exists=" + f.exists() +
+                " read=" + f.canRead() +
+                " exec=" + f.canExecute() +
+                " len=" + f.length() +
+                " symlink=" + Files.isSymbolicLink(f.toPath()));
+    }
+
+    // Один тестовый запуск proot с гостевой командой
+    private void testLaunch(File proot, File rootfs, String tag,
+                            List<String> guestCmd) throws Exception {
         List<String> cmd = new ArrayList<>();
         cmd.add(proot.getAbsolutePath());
         cmd.add("-r"); cmd.add(rootfs.getAbsolutePath());
         cmd.add("-b"); cmd.add("/dev");
         cmd.add("-b"); cmd.add("/proc");
         cmd.add("-b"); cmd.add("/sys");
-        cmd.add("/bin/bash");
-        cmd.add("-c");
-        cmd.add("echo '=== КОНТЕЙНЕР ЖИВ ==='; uname -a; head -4 /etc/os-release; ls /");
+        cmd.addAll(guestCmd);
 
-        log("Запуск: " + String.join(" ", cmd));
+        log("--- Тест " + tag + " ---");
 
         ProcessBuilder pb = new ProcessBuilder(cmd);
         pb.directory(rootfs);
-        pb.redirectErrorStream(true); // stderr туда же, чтобы ошибки не пропали
-
-        // Переменные окружения для контейнера
+        pb.redirectErrorStream(true);
         pb.environment().put("HOME", "/root");
         pb.environment().put("TERM", "xterm");
         pb.environment().put("PATH",
                 "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin");
-        pb.environment().put("PROOT_TMP_DIR", tmpDir.getAbsolutePath());
 
-        Process process = pb.start();
-
-        // Читаем вывод контейнера построчно
-        try (InputStream in = process.getInputStream()) {
+        Process p = pb.start();
+        try (InputStream in = p.getInputStream()) {
             java.io.BufferedReader br =
                     new java.io.BufferedReader(new java.io.InputStreamReader(in));
             String line;
             while ((line = br.readLine()) != null) {
-                log("[linux] " + line);
+                log("[" + tag + "] " + line);
             }
         }
-
-        int code = process.waitFor();
-        log("Контейнер завершился, код: " + code);
-        if (code != 0) {
-            log("✗ Контейнер упал. Пришли скриншот — будем чинить.");
-        }
+        int code = p.waitFor();
+        log("Тест " + tag + " код выхода: " + code);
     }
 
-    // Ищем proot: сначала в nativeLibraryDir (libproot.so), иначе из assets в files/
     private File prepareProot() throws Exception {
         File libProot = new File(getApplicationInfo().nativeLibraryDir, "libproot.so");
         if (libProot.exists() && libProot.canExecute()) {
-            log("Использую proot из nativeLibraryDir (libproot.so)");
             return libProot;
         }
 
-        log("libproot.so не найден, копирую proot_static из assets...");
         File proot = new File(getFilesDir(), "proot");
         if (!proot.exists() || proot.length() == 0) {
             try (InputStream in = getAssets().open("proot_static");
@@ -177,13 +191,10 @@ public class MainActivity extends Activity {
                 while ((n = in.read(buf)) > 0) out.write(buf, 0, n);
             }
         }
-
-        // Ставим права 0755 (rwxr-xr-x)
         Os.chmod(proot.getAbsolutePath(), 0b111101101);
         return proot;
     }
 
-    // Распаковка debian-rootfs.tar.xz с сохранением прав, symlink и hardlink
     private void extractRootfs(File rootfs) throws Exception {
         rootfs.mkdirs();
         String destCanonical = rootfs.getCanonicalPath();
@@ -202,12 +213,7 @@ public class MainActivity extends Activity {
                 if (name.isEmpty()) continue;
 
                 File out = new File(rootfs, name);
-
-                // Защита от выхода за пределы rootfs
-                if (!out.getCanonicalPath().startsWith(destCanonical)) {
-                    log("Пропускаю опасный путь: " + name);
-                    continue;
-                }
+                if (!out.getCanonicalPath().startsWith(destCanonical)) continue;
 
                 if (entry.isDirectory()) {
                     out.mkdirs();
@@ -218,10 +224,10 @@ public class MainActivity extends Activity {
                     try {
                         Os.symlink(entry.getLinkName(), out.getAbsolutePath());
                     } catch (Throwable t) {
-                        log("symlink ошибка: " + name + " -> " + t.getMessage());
+                        log("symlink ошибка: " + name);
                     }
                 } else if (entry.isLink()) {
-                    // hardlink
+                    // hardlink, при неудаче — копируем файл целиком
                     out.getParentFile().mkdirs();
                     String target = entry.getLinkName();
                     while (target.startsWith("./")) target = target.substring(2);
@@ -231,11 +237,11 @@ public class MainActivity extends Activity {
                         try {
                             Os.link(targetFile.getAbsolutePath(), out.getAbsolutePath());
                         } catch (Throwable t) {
-                            log("hardlink ошибка: " + name + " -> " + t.getMessage());
+                            copyFile(targetFile, out);
+                            safeChmod(out, entry.getMode() & 07777, false);
                         }
                     }
                 } else {
-                    // Обычный файл
                     out.getParentFile().mkdirs();
                     try (FileOutputStream fos = new FileOutputStream(out)) {
                         byte[] buf = new byte[65536];
@@ -252,7 +258,15 @@ public class MainActivity extends Activity {
         log("Всего записей в rootfs: " + count);
     }
 
-    // chmod с запасным вариантом, если Os.chmod недоступен
+    private void copyFile(File src, File dst) throws Exception {
+        try (FileInputStream in = new FileInputStream(src);
+             FileOutputStream out = new FileOutputStream(dst)) {
+            byte[] buf = new byte[65536];
+            int n;
+            while ((n = in.read(buf)) > 0) out.write(buf, 0, n);
+        }
+    }
+
     private void safeChmod(File f, int mode, boolean isDir) {
         try {
             int m = (mode != 0) ? mode : (isDir ? 0755 : 0644);
@@ -272,7 +286,7 @@ public class MainActivity extends Activity {
 
     private String readFile(File f) {
         try {
-            return new String(java.nio.file.Files.readAllBytes(f.toPath())).trim();
+            return new String(Files.readAllBytes(f.toPath())).trim();
         } catch (Throwable t) {
             return "";
         }
