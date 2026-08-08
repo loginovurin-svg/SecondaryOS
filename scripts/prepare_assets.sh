@@ -4,131 +4,127 @@ set -euo pipefail
 # ============================================================
 # SecondaryOS
 # scripts/prepare_assets.sh
+#
+# Теперь proot НЕ скачивается, а собирается кросс-компилятором
+# из исходников ветки Termux (там патчи для Android, включая
+# обход seccomp/rseq). Статически, musl, aarch64.
 # ============================================================
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ASSETS_DIR="$ROOT/app/src/main/assets"
 JNILIB_DIR="$ROOT/app/src/main/jniLibs/arm64-v8a"
-TMP_DIR="$(mktemp -d)"
+WORK="$(mktemp -d)"
 
-trap 'rm -rf "$TMP_DIR"' EXIT
+trap 'rm -rf "$WORK"' EXIT
 
 echo "=== SecondaryOS prepare_assets ==="
-echo "ROOT:       $ROOT"
-echo "ASSETS_DIR: $ASSETS_DIR"
-echo "TMP_DIR:    $TMP_DIR"
-echo
+echo "ROOT: $ROOT"
+echo "WORK: $WORK"
 
-REQUIRED_COMMANDS=(curl file tar grep)
+mkdir -p "$ASSETS_DIR" "$JNILIB_DIR"
 
-for cmd in "${REQUIRED_COMMANDS[@]}"; do
-    if ! command -v "$cmd" >/dev/null 2>&1; then
-        echo "ОШИБКА: не найдена обязательная команда: $cmd"
-        exit 1
-    fi
-done
+rm -f "$ASSETS_DIR/proot_static" "$JNILIB_DIR/libproot.so"
 
-mkdir -p "$ASSETS_DIR"
-mkdir -p "$JNILIB_DIR"
+# ------------------------------------------------------------
+# 1. Скачиваем musl кросс-тулчейн для aarch64 (один архив)
+# ------------------------------------------------------------
+echo "=== Скачиваю musl cross toolchain ==="
+curl -fL --retry 3 -o "$WORK/musl.tgz" \
+    "https://musl.cc/aarch64-linux-musl-cross.tgz"
+tar -xzf "$WORK/musl.tgz" -C "$WORK"
+CC="$WORK/aarch64-linux-musl-cross/bin/aarch64-linux-musl-gcc"
+echo "Компилятор: $CC"
+"$CC" --version | head -n 1
 
-echo "=== Очистка старых артефактов ==="
-rm -rf \
-    "$ASSETS_DIR/proot_static" \
-    "$ASSETS_DIR/debian-rootfs.tar.xz" \
-    "$ASSETS_DIR/debian-rootfs.tar.gz" \
-    "$ASSETS_DIR/debian-rootfs.tgz" \
-    "$ASSETS_DIR/debian-rootfs.tar" \
-    "$JNILIB_DIR/libproot.so"
+# ------------------------------------------------------------
+# 2. Скачиваем и компилируем talloc (один .c файл)
+# ------------------------------------------------------------
+echo "=== Собираю talloc ==="
+curl -fL --retry 3 -o "$WORK/talloc.tar.gz" \
+    "https://www.samba.org/ftp/talloc/talloc-2.4.2.tar.gz"
+tar -xzf "$WORK/talloc.tar.gz" -C "$WORK"
+TALLOC_DIR="$WORK/talloc-2.4.2"
 
-echo "Очистка завершена."
-echo
+"$CC" -c "$TALLOC_DIR/talloc.c" \
+    -I "$TALLOC_DIR" \
+    -D_GNU_SOURCE -O2 \
+    -o "$WORK/talloc.o"
+echo "talloc.o готов"
 
-# Статический бинарник proot (официальный релиз)
-PROOT_URL="${PROOT_URL:-https://github.com/proot-me/proot/releases/download/v5.3.0/proot-v5.3.0-aarch64-static}"
-ROOTFS_URL="${ROOTFS_URL:-}"
+# ------------------------------------------------------------
+# 3. Скачиваем исходники proot из ветки Termux
+# ------------------------------------------------------------
+echo "=== Скачиваю proot (termux fork) ==="
+curl -fL --retry 3 -o "$WORK/proot.tar.gz" \
+    "https://github.com/termux/proot/archive/refs/heads/master.tar.gz"
+tar -xzf "$WORK/proot.tar.gz" -C "$WORK"
+PROOT_SRC="$(echo "$WORK"/proot-*/src)"
+echo "Исходники: $PROOT_SRC"
 
-download_file() {
-    local url="$1"
-    local out="$2"
-    echo "Скачиваю:"
-    echo "  URL: $url"
-    curl -fL --retry 3 --retry-delay 2 -o "$out" "$url"
-    echo "Файл скачан: $(du -h "$out" | cut -f1)"
-    echo
-}
+# ------------------------------------------------------------
+# 4. Компилируем proot статически одним вызовом
+# ------------------------------------------------------------
+echo "=== Компилирую proot ==="
+cd "$PROOT_SRC"
 
-echo "=== Получение proot ==="
-PROOT_ASSET="$TMP_DIR/proot_asset"
-PROOT_FINAL="$ASSETS_DIR/proot_static"
+# Все .c файлы proot
+SRCS=$(find . -name '*.c' | sort)
+echo "Файлов для компиляции: $(echo "$SRCS" | wc -l)"
 
-download_file "$PROOT_URL" "$PROOT_ASSET"
+"$CC" -O2 -static \
+    -D_GNU_SOURCE -D_FILE_OFFSET_BITS=64 \
+    -I. -I "$TALLOC_DIR" \
+    $SRCS "$WORK/talloc.o" \
+    -o "$WORK/proot"
 
-# Проверка, что это ELF бинарник
-if ! file "$PROOT_ASSET" | grep -qi 'ELF'; then
-    echo "ПРЕДУПРЕЖДЕНИЕ: скачанный proot не похож на ELF бинарник."
-    file "$PROOT_ASSET"
-fi
+echo "Проверка собранного proot:"
+file "$WORK/proot" || true
 
-# Кладём в assets (для копирования в files/ при необходимости)
-cp "$PROOT_ASSET" "$PROOT_FINAL"
-chmod 0755 "$PROOT_FINAL"
-
-# Кладём в jniLibs как libproot.so — Android сам распакует его
-# в nativeLibraryDir с правами на выполнение (обход запрета exec из files/)
-cp "$PROOT_ASSET" "$JNILIB_DIR/libproot.so"
-chmod 0755 "$JNILIB_DIR/libproot.so"
-
-echo "Проверка file для proot:"
-file "$PROOT_FINAL" || true
-echo "proot_static помещён сюда: $PROOT_FINAL"
-echo "libproot.so помещён сюда: $JNILIB_DIR/libproot.so"
-echo
-
-echo "=== Получение Debian rootfs ==="
-ROOTFS_ASSET="$TMP_DIR/rootfs_asset"
-
-if [[ -z "$ROOTFS_URL" ]]; then
-    echo "ROOTFS_URL не задан. Ищу последний rootfs на images.linuxcontainers.org..."
-    ROOTFS_BASE_URL="https://images.linuxcontainers.org/images/debian/bookworm/arm64/default"
-
-    # Сервер кодирует двоеточие как %3A в HTML, поэтому ищем %3A
-    LATEST_DIR=$(curl -fsSL "$ROOTFS_BASE_URL/" | grep -oP '(?<=href=")[0-9]{8}_[0-9]{2}%3A[0-9]{2}' | sort | tail -n 1)
-
-    if [[ -z "$LATEST_DIR" ]]; then
-        echo "ОШИБКА: не удалось найти последнюю папку с rootfs на images.linuxcontainers.org"
-        exit 1
-    fi
-
-    ROOTFS_URL="$ROOTFS_BASE_URL/$LATEST_DIR/rootfs.tar.xz"
-    echo "Найдена последняя сборка: $LATEST_DIR"
-fi
-
-download_file "$ROOTFS_URL" "$ROOTFS_ASSET"
-
-echo "=== Подготовка rootfs archive ==="
-file "$ROOTFS_ASSET" || true
-
-if file "$ROOTFS_ASSET" | grep -qi 'XZ compressed'; then
-    cp "$ROOTFS_ASSET" "$ASSETS_DIR/debian-rootfs.tar.xz"
-elif file "$ROOTFS_ASSET" | grep -qi 'gzip compressed'; then
-    cp "$ROOTFS_ASSET" "$ASSETS_DIR/debian-rootfs.tar.gz"
-elif tar -tf "$ROOTFS_ASSET" >/dev/null 2>&1; then
-    if command -v xz >/dev/null 2>&1; then
-        xz -zc "$ROOTFS_ASSET" > "$ASSETS_DIR/debian-rootfs.tar.xz"
-    elif command -v gzip >/dev/null 2>&1; then
-        gzip -c "$ROOTFS_ASSET" > "$ASSETS_DIR/debian-rootfs.tar.gz"
-    else
-        cp "$ROOTFS_ASSET" "$ASSETS_DIR/debian-rootfs.tar"
-    fi
-else
-    echo "ОШИБКА: не понимаю формат rootfs."
+if ! file "$WORK/proot" | grep -qi 'aarch64'; then
+    echo "ОШИБКА: proot не aarch64"
     exit 1
 fi
+
+if ! file "$WORK/proot" | grep -qi 'statically linked'; then
+    echo "ОШИБКА: proot не статический"
+    exit 1
+fi
+
+# ------------------------------------------------------------
+# 5. Кладём proot в assets и jniLibs
+# ------------------------------------------------------------
+cp "$WORK/proot" "$ASSETS_DIR/proot_static"
+chmod 0755 "$ASSETS_DIR/proot_static"
+
+cp "$WORK/proot" "$JNILIB_DIR/libproot.so"
+chmod 0755 "$JNILIB_DIR/libproot.so"
+
+echo "proot_static и libproot.so готовы"
+echo
+
+# ------------------------------------------------------------
+# 6. Debian rootfs (как раньше, с images.linuxcontainers.org)
+# ------------------------------------------------------------
+echo "=== Получение Debian rootfs ==="
+ROOTFS_URL="${ROOTFS_URL:-}"
+
+if [[ -z "$ROOTFS_URL" ]]; then
+    ROOTFS_BASE_URL="https://images.linuxcontainers.org/images/debian/bookworm/arm64/default"
+    LATEST_DIR=$(curl -fsSL "$ROOTFS_BASE_URL/" | grep -oP '(?<=href=")[0-9]{8}_[0-9]{2}%3A[0-9]{2}' | sort | tail -n 1)
+    if [[ -z "$LATEST_DIR" ]]; then
+        echo "ОШИБКА: не найдена папка rootfs"
+        exit 1
+    fi
+    ROOTFS_URL="$ROOTFS_BASE_URL/$LATEST_DIR/rootfs.tar.xz"
+    echo "Найдена сборка: $LATEST_DIR"
+fi
+
+curl -fL --retry 3 -o "$WORK/rootfs.tar.xz" "$ROOTFS_URL"
+cp "$WORK/rootfs.tar.xz" "$ASSETS_DIR/debian-rootfs.tar.xz"
 
 echo
 echo "Готовые assets:"
 ls -lh "$ASSETS_DIR"
-echo
 echo "Готовые jniLibs:"
 ls -lh "$JNILIB_DIR"
 echo "=== prepare_assets.sh завершён успешно ==="
