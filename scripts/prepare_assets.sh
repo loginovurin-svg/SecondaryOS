@@ -8,6 +8,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ASSETS_DIR="$ROOT/app/src/main/assets"
+JNILIB_DIR="$ROOT/app/src/main/jniLibs/arm64-v8a"
 TMP_DIR="$(mktemp -d)"
 
 trap 'rm -rf "$TMP_DIR"' EXIT
@@ -28,6 +29,7 @@ for cmd in "${REQUIRED_COMMANDS[@]}"; do
 done
 
 mkdir -p "$ASSETS_DIR"
+mkdir -p "$JNILIB_DIR"
 
 echo "=== Очистка старых артефактов ==="
 rm -rf \
@@ -35,12 +37,13 @@ rm -rf \
     "$ASSETS_DIR/debian-rootfs.tar.xz" \
     "$ASSETS_DIR/debian-rootfs.tar.gz" \
     "$ASSETS_DIR/debian-rootfs.tgz" \
-    "$ASSETS_DIR/debian-rootfs.tar"
+    "$ASSETS_DIR/debian-rootfs.tar" \
+    "$JNILIB_DIR/libproot.so"
 
 echo "Очистка завершена."
 echo
 
-# Жестко задаем URL статического бинарника proot
+# Статический бинарник proot (официальный релиз)
 PROOT_URL="${PROOT_URL:-https://github.com/proot-me/proot/releases/download/v5.3.0/proot-v5.3.0-aarch64-static}"
 ROOTFS_URL="${ROOTFS_URL:-}"
 
@@ -66,11 +69,19 @@ if ! file "$PROOT_ASSET" | grep -qi 'ELF'; then
     file "$PROOT_ASSET"
 fi
 
+# Кладём в assets (для копирования в files/ при необходимости)
 cp "$PROOT_ASSET" "$PROOT_FINAL"
 chmod 0755 "$PROOT_FINAL"
+
+# Кладём в jniLibs как libproot.so — Android сам распакует его
+# в nativeLibraryDir с правами на выполнение (обход запрета exec из files/)
+cp "$PROOT_ASSET" "$JNILIB_DIR/libproot.so"
+chmod 0755 "$JNILIB_DIR/libproot.so"
+
 echo "Проверка file для proot:"
 file "$PROOT_FINAL" || true
 echo "proot_static помещён сюда: $PROOT_FINAL"
+echo "libproot.so помещён сюда: $JNILIB_DIR/libproot.so"
 echo
 
 echo "=== Получение Debian rootfs ==="
@@ -79,16 +90,15 @@ ROOTFS_ASSET="$TMP_DIR/rootfs_asset"
 if [[ -z "$ROOTFS_URL" ]]; then
     echo "ROOTFS_URL не задан. Ищу последний rootfs на images.linuxcontainers.org..."
     ROOTFS_BASE_URL="https://images.linuxcontainers.org/images/debian/bookworm/arm64/default"
-    
-    # Получаем список папок с датами, берем последнюю.
-    # Сервер кодирует двоеточие как %3A в HTML, поэтому ищем %3A.
+
+    # Сервер кодирует двоеточие как %3A в HTML, поэтому ищем %3A
     LATEST_DIR=$(curl -fsSL "$ROOTFS_BASE_URL/" | grep -oP '(?<=href=")[0-9]{8}_[0-9]{2}%3A[0-9]{2}' | sort | tail -n 1)
-    
+
     if [[ -z "$LATEST_DIR" ]]; then
         echo "ОШИБКА: не удалось найти последнюю папку с rootfs на images.linuxcontainers.org"
         exit 1
     fi
-    
+
     ROOTFS_URL="$ROOTFS_BASE_URL/$LATEST_DIR/rootfs.tar.xz"
     echo "Найдена последняя сборка: $LATEST_DIR"
 fi
@@ -118,4 +128,7 @@ fi
 echo
 echo "Готовые assets:"
 ls -lh "$ASSETS_DIR"
+echo
+echo "Готовые jniLibs:"
+ls -lh "$JNILIB_DIR"
 echo "=== prepare_assets.sh завершён успешно ==="
