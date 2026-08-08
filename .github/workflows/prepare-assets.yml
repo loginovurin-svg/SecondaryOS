@@ -1,0 +1,57 @@
+name: Prepare Assets
+
+on:
+  workflow_dispatch:
+    inputs:
+      proot_url:
+        description: 'Прямой URL к proot aarch64 (необязательно)'
+        required: false
+        default: ''
+      rootfs_url:
+        description: 'Прямой URL к Debian rootfs aarch64 (необязательно)'
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+jobs:
+  prepare-assets:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install required tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y curl jq file xz-utils unzip
+
+      - name: Check prepare script exists
+        run: |
+          if [[ ! -f scripts/prepare_assets.sh ]]; then
+            echo "ОШИБКА: файл scripts/prepare_assets.sh не найден."
+            echo "Сначала создай его в репозитории."
+            exit 1
+          fi
+
+      - name: Make prepare script executable
+        run: |
+          chmod +x scripts/prepare_assets.sh
+
+      - name: Run prepare_assets.sh
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PROOT_URL: ${{ github.event.inputs.proot_url }}
+          ROOTFS_URL: ${{ github.event.inputs.rootfs_url }}
+        run: |
+          bash scripts/prepare_assets.sh
+
+      - name: Upload assets artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: secondaryos-assets
+          path: app/src/main/assets
+          if-no-files-found: error
+          retention-days: 10
