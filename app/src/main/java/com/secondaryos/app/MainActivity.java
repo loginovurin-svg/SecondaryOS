@@ -110,14 +110,6 @@ public class MainActivity extends Activity {
         tmpDir.mkdirs();
         log("PROOT_TMP_DIR: " + tmpDir.getAbsolutePath());
 
-        // Проверка ключевых файлов с хост-стороны
-        checkFile(rootfs, "bin");
-        checkFile(rootfs, "lib");
-        checkFile(rootfs, "usr/bin/bash");
-        checkFile(rootfs, "usr/bin/dash");
-        checkFile(rootfs, "lib/ld-linux-aarch64.so.1");
-        checkFile(rootfs, "usr/lib/ld-linux-aarch64.so.1");
-
         // Тест A: прямой запуск ELF без оболочки
         List<String> a = new ArrayList<>();
         a.add("/usr/bin/uname"); a.add("-a");
@@ -134,17 +126,6 @@ public class MainActivity extends Activity {
         testLaunch(proot, rootfs, tmpDir, "C(bash)", c);
 
         log("=== Диагностика завершена ===");
-    }
-
-    // Печатает существование/права/длину файла внутри rootfs
-    private void checkFile(File rootfs, String rel) {
-        File f = new File(rootfs, rel);
-        log("Проверка " + rel +
-                ": exists=" + f.exists() +
-                " read=" + f.canRead() +
-                " exec=" + f.canExecute() +
-                " len=" + f.length() +
-                " symlink=" + Files.isSymbolicLink(f.toPath()));
     }
 
     // Один тестовый запуск proot с гостевой командой
@@ -169,8 +150,12 @@ public class MainActivity extends Activity {
         pb.environment().put("TERM", "xterm");
         pb.environment().put("PATH",
                 "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin");
-        // ВАЖНО: без этого proot не может создать временный файл
+        // Без этого proot не может создать временный файл
         pb.environment().put("PROOT_TMP_DIR", tmpDir.getAbsolutePath());
+        // ВАЖНО: отключаем rseq в glibc Debian 12,
+        // иначе старый proot 5.3.0 молча роняет гостя (известный баг)
+        pb.environment().put("GLIBC_TUNABLES",
+                "glibc.rseq=0:glibc.pthread.rseq=0");
 
         Process p = pb.start();
         try (InputStream in = p.getInputStream()) {
