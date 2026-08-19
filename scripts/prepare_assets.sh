@@ -3,11 +3,11 @@ set -euo pipefail
 
 # ============================================================
 # SecondaryOS
-# scripts/prepare_assets.sh — СБОРКА PROOT ИЗ ИСХОДНИКОВ
+# scripts/prepare_assets.sh — СБОРКА PROOT ЧЕРЕЗ WAF
 #
-# proot из ветки termux/proot (патчи под Android).
-# talloc компилируется одним вызовом gcc с флагами вместо waf.
-# proot требует build.h (генерируется waf) — создаём заглушку.
+# proot из ветки termux/proot требует свою систему сборки waf.
+# Пытаться скомпилировать одним вызовом gcc не работает из-за
+# встроенного loader и тестовых файлов.
 # Rootfs: Debian 11 (bullseye).
 # ============================================================
 
@@ -18,7 +18,7 @@ WORK="$(mktemp -d)"
 
 trap 'rm -rf "$WORK"' EXIT
 
-echo "=== SecondaryOS prepare_assets (сборка proot) ==="
+echo "=== SecondaryOS prepare_assets (waf build) ==="
 echo "ROOT: $ROOT"
 
 mkdir -p "$ASSETS_DIR" "$JNILIB_DIR"
@@ -30,193 +30,90 @@ if [ "$(id -u)" -ne 0 ] && command -v sudo >/dev/null 2>&1; then
     SUDO="sudo"
 fi
 
-download_with_fallback() {
-    local out="$1"
-    shift
-    local url
-    for url in "$@"; do
-        echo "Пробую: $url"
-        if curl -sS -fL --retry 2 --connect-timeout 30 -o "$out" "$url"; then
-            echo "Скачано: $out"
-            return 0
-        fi
-    done
-    echo "ОШИБКА: не удалось скачать $out"
-    return 1
-}
-
 # ------------------------------------------------------------
-# 1. Кросс-компилятор aarch64 из репозитория Ubuntu
+# 1. Устанавливаем кросс-компилятор и waf
 # ------------------------------------------------------------
-echo "=== Устанавливаю gcc-aarch64-linux-gnu ==="
+echo "=== Устанавливаю gcc-aarch64-linux-gnu и python3 ==="
 $SUDO apt-get update -qq
-$SUDO apt-get install -y -qq gcc-aarch64-linux-gnu libc6-dev-arm64-cross
+$SUDO apt-get install -y -qq \
+    gcc-aarch64-linux-gnu libc6-dev-arm64-cross \
+    python3 python3-pip
 
-CC="aarch64-linux-gnu-gcc"
-AR="aarch64-linux-gnu-ar"
-echo "Компилятор: $CC"
-"$CC" --version | head -n 1
-
-# ------------------------------------------------------------
-# 2. talloc + заглушка replace.h + флаги вместо waf
-# ------------------------------------------------------------
-echo "=== Скачиваю talloc ==="
-download_with_fallback "$WORK/talloc.tar.gz" \
-    "https://www.samba.org/ftp/talloc/talloc-2.4.2.tar.gz" \
-    "https://ftp.samba.org/pub/talloc/talloc-2.4.2.tar.gz"
-
-tar -xzf "$WORK/talloc.tar.gz" -C "$WORK"
-TALLOC_DIR="$WORK/talloc-2.4.2"
-
-# Заглушка вместо libreplace из Samba
-REPLACE_DIR="$WORK/libreplace"
-mkdir -p "$REPLACE_DIR"
-cat > "$REPLACE_DIR/replace.h" <<'EOF'
-#ifndef _REPLACE_H
-#define _REPLACE_H
-#include <stdlib.h>
-#include <string.h>
-#include <stdio.h>
-#include <stdint.h>
-#include <stdbool.h>
-#include <errno.h>
-#include <unistd.h>
-#include <sys/types.h>
-#endif
-EOF
-
-echo "=== Компилирую talloc ==="
-"$CC" -c "$TALLOC_DIR/talloc.c" \
-    -I "$TALLOC_DIR" -I "$REPLACE_DIR" \
-    -D_GNU_SOURCE -O2 \
-    -include limits.h \
-    -DTALLOC_BUILD_VERSION_MAJOR=2 \
-    -DTALLOC_BUILD_VERSION_MINOR=4 \
-    -DTALLOC_BUILD_VERSION_RELEASE=2 \
-    -D'MIN(a,b)=((a)<(b)?(a):(b))' \
-    -D'MAX(a,b)=((a)>(b)?(a):(b))' \
-    -o "$WORK/talloc.o"
-
-# Статическая библиотека и заголовок в одном каталоге
-LIBDIR="$WORK/aarch64lib"
-mkdir -p "$LIBDIR"
-"$AR" rcs "$LIBDIR/libtalloc.a" "$WORK/talloc.o"
-cp "$TALLOC_DIR/talloc.h" "$LIBDIR/"
-echo "libtalloc.a готова"
+# waf можно взять из репозитория termux/proot (он там есть)
+# или установить через pip, но проще скачать их waf-скрипт
+echo "Проверка python3:"
+python3 --version
 
 # ------------------------------------------------------------
-# 3. Исходники proot из ветки Termux
+# 2. Скачиваем исходники proot из ветки Termux
 # ------------------------------------------------------------
 echo "=== Скачиваю proot (termux fork) ==="
-download_with_fallback "$WORK/proot.tar.gz" \
-    "https://github.com/termux/proot/archive/refs/heads/master.tar.gz" \
-    "https://codeload.github.com/termux/proot/tar.gz/refs/heads/master"
+curl -sS -fL --retry 3 -o "$WORK/proot.tar.gz" \
+    "https://github.com/termux/proot/archive/refs/heads/master.tar.gz"
 
 tar -xzf "$WORK/proot.tar.gz" -C "$WORK"
-PROOT_SRC="$(echo "$WORK"/proot-*/src)"
-echo "Исходники: $PROOT_SRC"
+PROOT_DIR="$(echo "$WORK"/proot-*)"
+echo "Исходники: $PROOT_DIR"
 
 # ------------------------------------------------------------
-# 4. Создаём build.h (заглушка вместо waf)
+# 3. Настраиваем и собираем через waf
 # ------------------------------------------------------------
-echo "=== Создаю build.h ==="
-BUILDDIR="$WORK/build"
-mkdir -p "$BUILDDIR"
+echo "=== Настраиваю proot через waf ==="
+cd "$PROOT_DIR"
 
-# build.h содержит макросы, которые обычно генерирует waf configure.
-# Включаем все HAVE_* для aarch64 Linux (x86_64-хост с кросс-компилятором).
-cat > "$BUILDDIR/build.h" <<'EOF'
-#ifndef BUILD_H
-#define BUILD_H
+# Устанавливаем кросс-компилятор в переменные окружения
+export CC="aarch64-linux-gnu-gcc"
+export CXX="aarch64-linux-gnu-g++"
+export AR="aarch64-linux-gnu-ar"
+export STRIP="aarch64-linux-gnu-strip"
 
-#define VERSION "5.4.0-termux"
+# waf configure с указанием целевой архитектуры
+python3 waf configure \
+    --target-arch=arm64 \
+    --prefix=/usr \
+    --static \
+    --enable-seccomp \
+    --enable-alloc-arena
 
-/* Архитектура */
-#define ARCH_arm64 1
-
-/* Системные вызовы и функции */
-#define HAVE_PROCESS_VM_READV 1
-#define HAVE_PROCESS_VM_WRITEV 1
-#define HAVE_GETAUXVAL 1
-#define HAVE_MKNOD 1
-#define HAVE_MKNODAT 1
-#define HAVE_PIVOT_ROOT 1
-#define HAVE_OPENAT 1
-#define HAVE_FSTATAT 1
-#define HAVE_UNLINKAT 1
-#define HAVE_RENAMEAT 1
-#define HAVE_LINKAT 1
-#define HAVE_SYMLINKAT 1
-#define HAVE_READLINKAT 1
-#define HAVE_MKDIRAT 1
-#define HAVE_FCHMODAT 1
-#define HAVE_FCHOWNAT 1
-#define HAVE_UTIMENSAT 1
-#define HAVE_FACCESSAT 1
-#define HAVE_PREAD 1
-#define HAVE_PWRITE 1
-#define HAVE_FUTIMENS 1
-
-/* Seccomp для обхода фильтров Android */
-#define HAVE_SECCOMP_FILTER 1
-
-/* ptrace options */
-#define HAVE_PTRACE_O_TRACESYSGOOD 1
-#define HAVE_PTRACE_O_TRACECLONE 1
-#define HAVE_PTRACE_O_TRACEFORK 1
-#define HAVE_PTRACE_O_TRACEVFORK 1
-#define HAVE_PTRACE_O_TRACEEXEC 1
-#define HAVE_PTRACE_O_TRACEEXIT 1
-
-/* Прочее */
-#define HAVE_STRLCPY 0
-#define HAVE_STRLCAT 0
-#define HAVE_PROGRAM_INVOCATION_NAME 1
-
-#endif /* BUILD_H */
-EOF
+echo "=== Собираю proot через waf ==="
+python3 waf build
 
 # ------------------------------------------------------------
-# 5. Компилируем proot статически одним вызовом gcc
+# 4. Проверяем и копируем готовый бинарник
 # ------------------------------------------------------------
-echo "=== Компилирую proot ==="
-cd "$PROOT_SRC"
+PROOT_BIN="$PROOT_DIR/build/src/proot"
 
-SRCS=$(find . -name '*.c' | sort)
-echo "Файлов для компиляции: $(echo "$SRCS" | wc -l)"
-
-"$CC" -O2 -static \
-    -D_GNU_SOURCE -D_FILE_OFFSET_BITS=64 \
-    -DPROOT_VERSION='"5.4.0-termux"' \
-    -I. -I "$LIBDIR" -I "$REPLACE_DIR" -I "$BUILDDIR" \
-    $SRCS "$LIBDIR/libtalloc.a" \
-    -o "$WORK/proot"
+if [[ ! -f "$PROOT_BIN" ]]; then
+    echo "ОШИБКА: waf не создал build/src/proot"
+    ls -la "$PROOT_DIR/build/" || true
+    exit 1
+fi
 
 echo "Проверка собранного proot:"
-file "$WORK/proot" || true
+file "$PROOT_BIN" || true
 
-if ! file "$WORK/proot" | grep -qi 'aarch64'; then
+if ! file "$PROOT_BIN" | grep -qi 'aarch64'; then
     echo "ОШИБКА: proot не aarch64"
     exit 1
 fi
-if ! file "$WORK/proot" | grep -qi 'statically linked'; then
+if ! file "$PROOT_BIN" | grep -qi 'statically linked'; then
     echo "ОШИБКА: proot не статический"
     exit 1
 fi
 
 # ------------------------------------------------------------
-# 6. Кладём proot в assets и jniLibs
+# 5. Кладём proot в assets и jniLibs
 # ------------------------------------------------------------
-cp "$WORK/proot" "$ASSETS_DIR/proot_static"
+cp "$PROOT_BIN" "$ASSETS_DIR/proot_static"
 chmod 0755 "$ASSETS_DIR/proot_static"
 
-cp "$WORK/proot" "$JNILIB_DIR/libproot.so"
+cp "$PROOT_BIN" "$JNILIB_DIR/libproot.so"
 chmod 0755 "$JNILIB_DIR/libproot.so"
 echo "proot_static и libproot.so готовы"
 echo
 
 # ------------------------------------------------------------
-# 7. Rootfs Debian 11 (bullseye)
+# 6. Rootfs Debian 11 (bullseye)
 # ------------------------------------------------------------
 echo "=== Скачиваю Debian 11 rootfs ==="
 ROOTFS_BASE_URL="https://images.linuxcontainers.org/images/debian/bullseye/arm64/default"
