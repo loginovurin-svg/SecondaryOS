@@ -6,8 +6,8 @@ set -euo pipefail
 # scripts/prepare_assets.sh — СБОРКА PROOT ИЗ ИСХОДНИКОВ
 #
 # proot из ветки termux/proot (патчи под Android).
-# talloc компилируется одним вызовом gcc с флагами, которые
-# заменяют их систему сборки (версия, limits.h, MIN/MAX).
+# talloc компилируется одним вызовом gcc с флагами вместо waf.
+# proot требует build.h (генерируется waf) — создаём заглушку.
 # Rootfs: Debian 11 (bullseye).
 # ============================================================
 
@@ -58,7 +58,7 @@ echo "Компилятор: $CC"
 "$CC" --version | head -n 1
 
 # ------------------------------------------------------------
-# 2. talloc + заглушка replace.h + флаги вместо их сборки
+# 2. talloc + заглушка replace.h + флаги вместо waf
 # ------------------------------------------------------------
 echo "=== Скачиваю talloc ==="
 download_with_fallback "$WORK/talloc.tar.gz" \
@@ -86,10 +86,6 @@ cat > "$REPLACE_DIR/replace.h" <<'EOF'
 EOF
 
 echo "=== Компилирую talloc ==="
-# Флаги заменяют waf/configure:
-# - версии talloc (2.4.2), которые требует talloc.c
-# - limits.h для UINT_MAX
-# - макросы MIN/MAX
 "$CC" -c "$TALLOC_DIR/talloc.c" \
     -I "$TALLOC_DIR" -I "$REPLACE_DIR" \
     -D_GNU_SOURCE -O2 \
@@ -121,7 +117,67 @@ PROOT_SRC="$(echo "$WORK"/proot-*/src)"
 echo "Исходники: $PROOT_SRC"
 
 # ------------------------------------------------------------
-# 4. Компилируем proot статически одним вызовом gcc
+# 4. Создаём build.h (заглушка вместо waf)
+# ------------------------------------------------------------
+echo "=== Создаю build.h ==="
+BUILDDIR="$WORK/build"
+mkdir -p "$BUILDDIR"
+
+# build.h содержит макросы, которые обычно генерирует waf configure.
+# Включаем все HAVE_* для aarch64 Linux (x86_64-хост с кросс-компилятором).
+cat > "$BUILDDIR/build.h" <<'EOF'
+#ifndef BUILD_H
+#define BUILD_H
+
+#define VERSION "5.4.0-termux"
+
+/* Архитектура */
+#define ARCH_arm64 1
+
+/* Системные вызовы и функции */
+#define HAVE_PROCESS_VM_READV 1
+#define HAVE_PROCESS_VM_WRITEV 1
+#define HAVE_GETAUXVAL 1
+#define HAVE_MKNOD 1
+#define HAVE_MKNODAT 1
+#define HAVE_PIVOT_ROOT 1
+#define HAVE_OPENAT 1
+#define HAVE_FSTATAT 1
+#define HAVE_UNLINKAT 1
+#define HAVE_RENAMEAT 1
+#define HAVE_LINKAT 1
+#define HAVE_SYMLINKAT 1
+#define HAVE_READLINKAT 1
+#define HAVE_MKDIRAT 1
+#define HAVE_FCHMODAT 1
+#define HAVE_FCHOWNAT 1
+#define HAVE_UTIMENSAT 1
+#define HAVE_FACCESSAT 1
+#define HAVE_PREAD 1
+#define HAVE_PWRITE 1
+#define HAVE_FUTIMENS 1
+
+/* Seccomp для обхода фильтров Android */
+#define HAVE_SECCOMP_FILTER 1
+
+/* ptrace options */
+#define HAVE_PTRACE_O_TRACESYSGOOD 1
+#define HAVE_PTRACE_O_TRACECLONE 1
+#define HAVE_PTRACE_O_TRACEFORK 1
+#define HAVE_PTRACE_O_TRACEVFORK 1
+#define HAVE_PTRACE_O_TRACEEXEC 1
+#define HAVE_PTRACE_O_TRACEEXIT 1
+
+/* Прочее */
+#define HAVE_STRLCPY 0
+#define HAVE_STRLCAT 0
+#define HAVE_PROGRAM_INVOCATION_NAME 1
+
+#endif /* BUILD_H */
+EOF
+
+# ------------------------------------------------------------
+# 5. Компилируем proot статически одним вызовом gcc
 # ------------------------------------------------------------
 echo "=== Компилирую proot ==="
 cd "$PROOT_SRC"
@@ -132,7 +188,7 @@ echo "Файлов для компиляции: $(echo "$SRCS" | wc -l)"
 "$CC" -O2 -static \
     -D_GNU_SOURCE -D_FILE_OFFSET_BITS=64 \
     -DPROOT_VERSION='"5.4.0-termux"' \
-    -I. -I "$LIBDIR" -I "$REPLACE_DIR" \
+    -I. -I "$LIBDIR" -I "$REPLACE_DIR" -I "$BUILDDIR" \
     $SRCS "$LIBDIR/libtalloc.a" \
     -o "$WORK/proot"
 
@@ -149,7 +205,7 @@ if ! file "$WORK/proot" | grep -qi 'statically linked'; then
 fi
 
 # ------------------------------------------------------------
-# 5. Кладём proot в assets и jniLibs
+# 6. Кладём proot в assets и jniLibs
 # ------------------------------------------------------------
 cp "$WORK/proot" "$ASSETS_DIR/proot_static"
 chmod 0755 "$ASSETS_DIR/proot_static"
@@ -160,7 +216,7 @@ echo "proot_static и libproot.so готовы"
 echo
 
 # ------------------------------------------------------------
-# 6. Rootfs Debian 11 (bullseye)
+# 7. Rootfs Debian 11 (bullseye)
 # ------------------------------------------------------------
 echo "=== Скачиваю Debian 11 rootfs ==="
 ROOTFS_BASE_URL="https://images.linuxcontainers.org/images/debian/bullseye/arm64/default"
