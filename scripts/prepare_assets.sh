@@ -3,11 +3,10 @@ set -euo pipefail
 
 # ============================================================
 # SecondaryOS
-# scripts/prepare_assets.sh — СБОРКА PROOT ЧЕРЕЗ make
+# scripts/prepare_assets.sh — СБОРКА PROOT ЧЕРЕЗ GNUmakefile
 #
-# В termux/proot нет waf/wscript. Их система сборки — make
-# в каталоге src (как в termux-packages). Makefile сам
-# собирает loader и встраивает его как бинарные данные.
+# В termux/proot/src есть GNUmakefile (не Makefile).
+# GNU make автоматически его находит.
 # Rootfs: Debian 11 (bullseye).
 # ============================================================
 
@@ -18,7 +17,7 @@ WORK="$(mktemp -d)"
 
 trap 'rm -rf "$WORK"' EXIT
 
-echo "=== SecondaryOS prepare_assets (make build) ==="
+echo "=== SecondaryOS prepare_assets (GNUmakefile build) ==="
 echo "ROOT: $ROOT"
 
 mkdir -p "$ASSETS_DIR" "$JNILIB_DIR"
@@ -57,7 +56,7 @@ echo "Компилятор: $CC"
 "$CC" --version | head -n 1
 
 # ------------------------------------------------------------
-# 2. talloc + заглушка replace.h + флаги вместо их сборки
+# 2. talloc + заглушка replace.h
 # ------------------------------------------------------------
 echo "=== Скачиваю talloc ==="
 download_with_fallback "$WORK/talloc.tar.gz" \
@@ -114,30 +113,26 @@ PROOT_SRC="$(echo "$WORK"/proot-*/src)"
 echo "Исходники: $PROOT_SRC"
 
 # ------------------------------------------------------------
-# 4. Собираем через make (их родная система сборки)
+# 4. Собираем через make (GNUmakefile)
 # ------------------------------------------------------------
 echo "=== Собираю proot через make ==="
 cd "$PROOT_SRC"
 
-if [[ ! -f Makefile ]]; then
-    echo "ОШИБКА: в src нет Makefile. Содержимое:"
-    ls -la
-    exit 1
-fi
+# GNU make автоматически найдёт GNUmakefile
+# Передаём CC, инклуды для talloc, путь к библиотеке
+export CC
+export CFLAGS="-I$LIBDIR -I$REPLACE_DIR -D_GNU_SOURCE -D_FILE_OFFSET_BITS=64 -O2"
+export LDFLAGS="-L$LIBDIR"
+export LDLIBS="-ltalloc"
 
-# += добавляет к флагам Makefile, не ломая их
-make V=1 \
-    CC="$CC" \
-    CFLAGS+="-I$LIBDIR -I$REPLACE_DIR -D_GNU_SOURCE -D_FILE_OFFSET_BITS=64" \
-    LDFLAGS+="-static -L$LIBDIR" \
-    LDLIBS+="-ltalloc" \
-    LIBS+="-ltalloc"
+make V=1
 
-# Ищем готовый бинарник (make может положить его в разные места)
+# Ищем готовый бинарник
 PROOT_BIN="$(find "$PROOT_SRC" "$PROOT_SRC/.." -maxdepth 3 -type f -name 'proot' ! -name '*.c' | head -n 1)"
 
 if [[ -z "$PROOT_BIN" ]]; then
     echo "ОШИБКА: make не создал бинарник proot"
+    ls -la "$PROOT_SRC" || true
     exit 1
 fi
 
