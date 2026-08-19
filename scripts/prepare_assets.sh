@@ -5,9 +5,9 @@ set -euo pipefail
 # SecondaryOS
 # scripts/prepare_assets.sh — СБОРКА PROOT ЧЕРЕЗ GNUmakefile
 #
-# Добавлен shim для objdump: Makefile использует системный
-# objdump, который не умеет читать arm64 объектные файлы.
-# Shim в /tmp/fake-bin перенаправляет objdump в aarch64-версию.
+# Makefile пытается собрать 32-битный loader (loader-m32.o)
+# через флаг -m32, но arm64 кросс-компилятор его не поддерживает.
+# Удаляем все упоминания loader-m32 из GNUmakefile перед сборкой.
 # ============================================================
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -114,9 +114,6 @@ echo "Исходники: $PROOT_SRC"
 
 # ------------------------------------------------------------
 # 4. Создаём shim для objdump
-# Makefile использует системный objdump, который не понимает
-# arm64 объектные файлы. Shim в /tmp/fake-bin перенаправляет
-# вызовы в aarch64-linux-gnu-objdump.
 # ------------------------------------------------------------
 echo "=== Создаю shim для objdump ==="
 FAKEBIN="/tmp/fake-bin"
@@ -128,12 +125,29 @@ EOF
 chmod +x "$FAKEBIN/objdump"
 
 # ------------------------------------------------------------
-# 5. Собираем через make (GNUmakefile)
+# 5. Удаляем 32-битный loader из GNUmakefile
+# Makefile пытается собрать loader-m32.o через -m32, но
+# arm64 кросс-компилятор его не поддерживает. Нам 32-битный
+# loader не нужен (Debian 11 arm64, всё 64-битное).
 # ------------------------------------------------------------
-echo "=== Собираю proot через make ==="
+echo "=== Патчу GNUmakefile: удаляю 32-битный loader ==="
 cd "$PROOT_SRC"
 
-# FAKEBIN в начале PATH — make найдёт наш shim objdump
+if [[ -f GNUmakefile ]]; then
+    # Удаляем все строки, связанные с loader-m32
+    sed -i '/loader-m32/d' GNUmakefile
+    sed -i '/-m32/d' GNUmakefile
+    echo "GNUmakefile пропатчен"
+else
+    echo "ОШИБКА: GNUmakefile не найден"
+    exit 1
+fi
+
+# ------------------------------------------------------------
+# 6. Собираем через make
+# ------------------------------------------------------------
+echo "=== Собираю proot через make ==="
+
 export PATH="$FAKEBIN:$PATH"
 export CC="aarch64-linux-gnu-gcc"
 export AR="aarch64-linux-gnu-ar"
@@ -169,7 +183,7 @@ if ! file "$PROOT_BIN" | grep -qi 'statically linked'; then
 fi
 
 # ------------------------------------------------------------
-# 6. Кладём proot в assets и jniLibs
+# 7. Кладём proot в assets и jniLibs
 # ------------------------------------------------------------
 cp "$PROOT_BIN" "$ASSETS_DIR/proot_static"
 chmod 0755 "$ASSETS_DIR/proot_static"
@@ -180,7 +194,7 @@ echo "proot_static и libproot.so готовы"
 echo
 
 # ------------------------------------------------------------
-# 7. Rootfs Debian 11 (bullseye)
+# 8. Rootfs Debian 11 (bullseye)
 # ------------------------------------------------------------
 echo "=== Скачиваю Debian 11 rootfs ==="
 ROOTFS_BASE_URL="https://images.linuxcontainers.org/images/debian/bullseye/arm64/default"
