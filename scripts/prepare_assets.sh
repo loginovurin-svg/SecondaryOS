@@ -5,9 +5,8 @@ set -euo pipefail
 # SecondaryOS
 # scripts/prepare_assets.sh — СБОРКА PROOT ЧЕРЕЗ GNUmakefile
 #
-# Makefile пытается собрать 32-битный loader (loader-m32.o)
-# через флаг -m32, но arm64 кросс-компилятор его не поддерживает.
-# Удаляем все упоминания loader-m32 из GNUmakefile перед сборкой.
+# Исправлен LDFLAGS: добавлен -static, чтобы proot слинковался
+# статически с libc и libtalloc.
 # ============================================================
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -126,15 +125,11 @@ chmod +x "$FAKEBIN/objdump"
 
 # ------------------------------------------------------------
 # 5. Удаляем 32-битный loader из GNUmakefile
-# Makefile пытается собрать loader-m32.o через -m32, но
-# arm64 кросс-компилятор его не поддерживает. Нам 32-битный
-# loader не нужен (Debian 11 arm64, всё 64-битное).
 # ------------------------------------------------------------
 echo "=== Патчу GNUmakefile: удаляю 32-битный loader ==="
 cd "$PROOT_SRC"
 
 if [[ -f GNUmakefile ]]; then
-    # Удаляем все строки, связанные с loader-m32
     sed -i '/loader-m32/d' GNUmakefile
     sed -i '/-m32/d' GNUmakefile
     echo "GNUmakefile пропатчен"
@@ -156,7 +151,8 @@ export OBJCOPY="aarch64-linux-gnu-objcopy"
 export OBJDUMP="aarch64-linux-gnu-objdump"
 
 export CFLAGS="-I$LIBDIR -I$REPLACE_DIR -D_GNU_SOURCE -D_FILE_OFFSET_BITS=64 -O2"
-export LDFLAGS="-L$LIBDIR"
+# ВАЖНО: добавлен -static для полной статической линковки
+export LDFLAGS="-static -L$LIBDIR"
 export LDLIBS="-ltalloc"
 
 make V=1
