@@ -3,11 +3,12 @@ set -euo pipefail
 
 # ============================================================
 # SecondaryOS
-# scripts/prepare_assets.sh
+# scripts/prepare_assets.sh — ВАРИАНТ B
 #
-# proot собирается кросс-компилятором из репозитория Ubuntu
-# (gcc-aarch64-linux-gnu), статически, из исходников ветки
-# Termux (там патчи для Android, включая обход seccomp/rseq).
+# НОЛЬ компиляции:
+# - готовый статический proot 5.3.0 (официальный релиз)
+# - готовый rootfs Debian 11 (bullseye): glibc 2.31, НЕТ rseq,
+#   поэтому старый proot работает без костылей
 # ============================================================
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -17,107 +18,33 @@ WORK="$(mktemp -d)"
 
 trap 'rm -rf "$WORK"' EXIT
 
-echo "=== SecondaryOS prepare_assets ==="
+echo "=== SecondaryOS prepare_assets (вариант B) ==="
 echo "ROOT: $ROOT"
-echo "WORK: $WORK"
 
 mkdir -p "$ASSETS_DIR" "$JNILIB_DIR"
-rm -f "$ASSETS_DIR/proot_static" "$JNILIB_DIR/libproot.so"
-
-# sudo нужен только если мы не root и sudo существует
-SUDO=""
-if [ "$(id -u)" -ne 0 ] && command -v sudo >/dev/null 2>&1; then
-    SUDO="sudo"
-fi
+rm -f "$ASSETS_DIR/proot_static" "$JNILIB_DIR/libproot.so" \
+      "$ASSETS_DIR/debian-rootfs.tar.xz"
 
 # ------------------------------------------------------------
-# 1. Кросс-компилятор aarch64 из репозитория Ubuntu
+# 1. Готовый статический proot 5.3.0
 # ------------------------------------------------------------
-echo "=== Устанавливаю gcc-aarch64-linux-gnu ==="
-$SUDO apt-get update -qq
-$SUDO apt-get install -y -qq gcc-aarch64-linux-gnu libc6-dev-arm64-cross
+echo "=== Скачиваю готовый proot ==="
+PROOT_URL="https://github.com/proot-me/proot/releases/download/v5.3.0/proot-v5.3.0-aarch64-static"
 
-CC="aarch64-linux-gnu-gcc"
-echo "Компилятор: $CC"
-"$CC" --version | head -n 1
+curl -sS -fL --retry 3 -o "$WORK/proot" "$PROOT_URL"
 
-# ------------------------------------------------------------
-# 2. Скачиваем и компилируем talloc (один .c файл)
-# ------------------------------------------------------------
-echo "=== Скачиваю talloc ==="
-
-download_with_fallback() {
-    local out="$1"
-    shift
-    local url
-    for url in "$@"; do
-        echo "Пробую: $url"
-        if curl -sS -fL --retry 2 --connect-timeout 30 -o "$out" "$url"; then
-            echo "Скачано: $out"
-            return 0
-        fi
-    done
-    echo "ОШИБКА: не удалось скачать $out ни с одного зеркала"
-    return 1
-}
-
-download_with_fallback "$WORK/talloc.tar.gz" \
-    "https://www.samba.org/ftp/talloc/talloc-2.4.2.tar.gz" \
-    "https://ftp.samba.org/pub/talloc/talloc-2.4.2.tar.gz"
-
-tar -xzf "$WORK/talloc.tar.gz" -C "$WORK"
-TALLOC_DIR="$WORK/talloc-2.4.2"
-
-echo "=== Компилирую talloc ==="
-"$CC" -c "$TALLOC_DIR/talloc.c" \
-    -I "$TALLOC_DIR" \
-    -D_GNU_SOURCE -O2 \
-    -o "$WORK/talloc.o"
-echo "talloc.o готов"
-
-# ------------------------------------------------------------
-# 3. Исходники proot из ветки Termux
-# ------------------------------------------------------------
-echo "=== Скачиваю proot (termux fork) ==="
-download_with_fallback "$WORK/proot.tar.gz" \
-    "https://github.com/termux/proot/archive/refs/heads/master.tar.gz" \
-    "https://codeload.github.com/termux/proot/tar.gz/refs/heads/master"
-
-tar -xzf "$WORK/proot.tar.gz" -C "$WORK"
-PROOT_SRC="$(echo "$WORK"/proot-*/src)"
-echo "Исходники: $PROOT_SRC"
-
-# ------------------------------------------------------------
-# 4. Компилируем proot статически
-# ------------------------------------------------------------
-echo "=== Компилирую proot ==="
-cd "$PROOT_SRC"
-
-SRCS=$(find . -name '*.c' | sort)
-echo "Файлов для компиляции: $(echo "$SRCS" | wc -l)"
-
-"$CC" -O2 -static \
-    -D_GNU_SOURCE -D_FILE_OFFSET_BITS=64 \
-    -I. -I "$TALLOC_DIR" \
-    $SRCS "$WORK/talloc.o" \
-    -o "$WORK/proot"
-
-echo "Проверка собранного proot:"
+echo "Проверка proot:"
 file "$WORK/proot" || true
 
 if ! file "$WORK/proot" | grep -qi 'aarch64'; then
     echo "ОШИБКА: proot не aarch64"
     exit 1
 fi
-
 if ! file "$WORK/proot" | grep -qi 'statically linked'; then
     echo "ОШИБКА: proot не статический"
     exit 1
 fi
 
-# ------------------------------------------------------------
-# 5. Кладём proot в assets и jniLibs
-# ------------------------------------------------------------
 cp "$WORK/proot" "$ASSETS_DIR/proot_static"
 chmod 0755 "$ASSETS_DIR/proot_static"
 
@@ -127,21 +54,23 @@ echo "proot_static и libproot.so готовы"
 echo
 
 # ------------------------------------------------------------
-# 6. Debian rootfs (images.linuxcontainers.org)
+# 2. Готовый rootfs Debian 11 (bullseye) arm64
 # ------------------------------------------------------------
-echo "=== Получение Debian rootfs ==="
-ROOTFS_URL="${ROOTFS_URL:-}"
+echo "=== Скачиваю Debian 11 rootfs ==="
+ROOTFS_BASE_URL="https://images.linuxcontainers.org/images/debian/bullseye/arm64/default"
 
-if [[ -z "$ROOTFS_URL" ]]; then
-    ROOTFS_BASE_URL="https://images.linuxcontainers.org/images/debian/bookworm/arm64/default"
-    LATEST_DIR=$(curl -sS -fL "$ROOTFS_BASE_URL/" | grep -oP '(?<=href=")[0-9]{8}_[0-9]{2}%3A[0-9]{2}' | sort | tail -n 1)
-    if [[ -z "$LATEST_DIR" ]]; then
-        echo "ОШИБКА: не найдена папка rootfs"
-        exit 1
-    fi
-    ROOTFS_URL="$ROOTFS_BASE_URL/$LATEST_DIR/rootfs.tar.xz"
-    echo "Найдена сборка: $LATEST_DIR"
+# Сервер кодирует двоеточие как %3A в HTML
+LATEST_DIR=$(curl -sS -fL "$ROOTFS_BASE_URL/" \
+    | grep -oP '(?<=href=")[0-9]{8}_[0-9]{2}%3A[0-9]{2}' \
+    | sort | tail -n 1)
+
+if [[ -z "$LATEST_DIR" ]]; then
+    echo "ОШИБКА: не найдена папка с rootfs bullseye"
+    exit 1
 fi
+
+ROOTFS_URL="$ROOTFS_BASE_URL/$LATEST_DIR/rootfs.tar.xz"
+echo "Найдена сборка: $LATEST_DIR"
 
 curl -sS -fL --retry 3 -o "$WORK/rootfs.tar.xz" "$ROOTFS_URL"
 cp "$WORK/rootfs.tar.xz" "$ASSETS_DIR/debian-rootfs.tar.xz"
