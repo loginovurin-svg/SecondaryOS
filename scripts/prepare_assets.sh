@@ -5,10 +5,10 @@ set -euo pipefail
 # SecondaryOS
 # scripts/prepare_assets.sh — СБОРКА PROOT ИЗ ИСХОДНИКОВ
 #
-# Цель: proot из ветки termux/proot (с патчами под Android,
-# обходит seccomp, из-за которого умирает bash).
-# Компилятор: gcc-aarch64-linux-gnu из репозитория Ubuntu.
-# Статически. Rootfs: Debian 11 (bullseye).
+# proot из ветки termux/proot (патчи под Android).
+# talloc компилируется одним вызовом gcc с флагами, которые
+# заменяют их систему сборки (версия, limits.h, MIN/MAX).
+# Rootfs: Debian 11 (bullseye).
 # ============================================================
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -58,7 +58,7 @@ echo "Компилятор: $CC"
 "$CC" --version | head -n 1
 
 # ------------------------------------------------------------
-# 2. talloc + минимальная заглушка replace.h
+# 2. talloc + заглушка replace.h + флаги вместо их сборки
 # ------------------------------------------------------------
 echo "=== Скачиваю talloc ==="
 download_with_fallback "$WORK/talloc.tar.gz" \
@@ -68,7 +68,7 @@ download_with_fallback "$WORK/talloc.tar.gz" \
 tar -xzf "$WORK/talloc.tar.gz" -C "$WORK"
 TALLOC_DIR="$WORK/talloc-2.4.2"
 
-# Заглушка вместо libreplace из Samba (talloc требует replace.h)
+# Заглушка вместо libreplace из Samba
 REPLACE_DIR="$WORK/libreplace"
 mkdir -p "$REPLACE_DIR"
 cat > "$REPLACE_DIR/replace.h" <<'EOF'
@@ -86,9 +86,19 @@ cat > "$REPLACE_DIR/replace.h" <<'EOF'
 EOF
 
 echo "=== Компилирую talloc ==="
+# Флаги заменяют waf/configure:
+# - версии talloc (2.4.2), которые требует talloc.c
+# - limits.h для UINT_MAX
+# - макросы MIN/MAX
 "$CC" -c "$TALLOC_DIR/talloc.c" \
     -I "$TALLOC_DIR" -I "$REPLACE_DIR" \
     -D_GNU_SOURCE -O2 \
+    -include limits.h \
+    -DTALLOC_BUILD_VERSION_MAJOR=2 \
+    -DTALLOC_BUILD_VERSION_MINOR=4 \
+    -DTALLOC_BUILD_VERSION_RELEASE=2 \
+    -D'MIN(a,b)=((a)<(b)?(a):(b))' \
+    -D'MAX(a,b)=((a)>(b)?(a):(b))' \
     -o "$WORK/talloc.o"
 
 # Статическая библиотека и заголовок в одном каталоге
@@ -99,7 +109,7 @@ cp "$TALLOC_DIR/talloc.h" "$LIBDIR/"
 echo "libtalloc.a готова"
 
 # ------------------------------------------------------------
-# 3. Исходники proot из ветки Termux (форк с патчами Android)
+# 3. Исходники proot из ветки Termux
 # ------------------------------------------------------------
 echo "=== Скачиваю proot (termux fork) ==="
 download_with_fallback "$WORK/proot.tar.gz" \
@@ -150,7 +160,7 @@ echo "proot_static и libproot.so готовы"
 echo
 
 # ------------------------------------------------------------
-# 6. Rootfs Debian 11 (bullseye) — как в рабочей версии
+# 6. Rootfs Debian 11 (bullseye)
 # ------------------------------------------------------------
 echo "=== Скачиваю Debian 11 rootfs ==="
 ROOTFS_BASE_URL="https://images.linuxcontainers.org/images/debian/bullseye/arm64/default"
