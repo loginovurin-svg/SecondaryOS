@@ -111,27 +111,28 @@ public class MainActivity extends Activity {
         File tmpDir = new File(getFilesDir(), "tmp");
         tmpDir.mkdirs();
 
-        // Тест A: uname (обычный)
+        // Тест A: uname С ПОЛНЫМ verbose (-v 9), чтобы поймать
+        // последний системный вызов перед SIGSYS
         List<String> a = new ArrayList<>();
         a.add("/usr/bin/uname"); a.add("-a");
-        testLaunch(proot, rootfs, tmpDir, "A", a, 0);
+        testLaunch(proot, rootfs, tmpDir, "A", a, 9);
 
         // Тест B: sh (обычный)
         List<String> b = new ArrayList<>();
         b.add("/bin/sh"); b.add("-c"); b.add("echo SH_OK");
         testLaunch(proot, rootfs, tmpDir, "B", b, 0);
 
-        // Тест C: bash с ПОЛНЫМ verbose-логом, хвост на экран
+        // Тест C: bash (обычный)
         List<String> c = new ArrayList<>();
         c.add("/bin/bash"); c.add("-c"); c.add("echo BASH_OK");
-        testLaunch(proot, rootfs, tmpDir, "C", c, 9);
+        testLaunch(proot, rootfs, tmpDir, "C", c, 0);
 
-        log("=== Готово. Нужен ХВОСТ теста C ===");
+        log("=== Готово. Нужен ХВОСТ теста A ===");
     }
 
     // verboseLevel=0: вывод напрямую.
     // verboseLevel>0: добавляет -v N, пишет всё в файл,
-    // на экран — последние 40 строк.
+    // на экран — последние 40 строк (там будет виден убийца).
     private void testLaunch(File proot, File rootfs, File tmpDir,
                             String tag, List<String> guestCmd,
                             int verboseLevel) throws Exception {
