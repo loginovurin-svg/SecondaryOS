@@ -111,28 +111,24 @@ public class MainActivity extends Activity {
         File tmpDir = new File(getFilesDir(), "tmp");
         tmpDir.mkdirs();
 
-        // Тест A: uname С ПОЛНЫМ verbose (-v 9), чтобы поймать
-        // последний системный вызов перед SIGSYS
+        // Тест A: uname с verbose — проверяем, жив ли proot после фикса rseq
         List<String> a = new ArrayList<>();
         a.add("/usr/bin/uname"); a.add("-a");
         testLaunch(proot, rootfs, tmpDir, "A", a, 9);
 
-        // Тест B: sh (обычный)
+        // Тест B: sh
         List<String> b = new ArrayList<>();
         b.add("/bin/sh"); b.add("-c"); b.add("echo SH_OK");
         testLaunch(proot, rootfs, tmpDir, "B", b, 0);
 
-        // Тест C: bash (обычный)
+        // Тест C: bash — главная цель
         List<String> c = new ArrayList<>();
         c.add("/bin/bash"); c.add("-c"); c.add("echo BASH_OK");
         testLaunch(proot, rootfs, tmpDir, "C", c, 0);
 
-        log("=== Готово. Нужен ХВОСТ теста A ===");
+        log("=== Готово. Смотри результаты A/B/C ===");
     }
 
-    // verboseLevel=0: вывод напрямую.
-    // verboseLevel>0: добавляет -v N, пишет всё в файл,
-    // на экран — последние 40 строк (там будет виден убийца).
     private void testLaunch(File proot, File rootfs, File tmpDir,
                             String tag, List<String> guestCmd,
                             int verboseLevel) throws Exception {
@@ -159,6 +155,11 @@ public class MainActivity extends Activity {
         pb.environment().put("PATH",
                 "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin");
         pb.environment().put("PROOT_TMP_DIR", tmpDir.getAbsolutePath());
+        // ГЛАВНЫЙ ФИКС: отключаем rseq в glibc (и у proot, и у гостя).
+        // rseq запрещён seccomp Android и убивал proot сигналом 31
+        // ещё до первого вывода.
+        pb.environment().put("GLIBC_TUNABLES",
+                "glibc.rseq=0:glibc.pthread.rseq=0");
 
         Process p = pb.start();
 
