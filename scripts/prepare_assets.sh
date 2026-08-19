@@ -3,7 +3,12 @@ set -euo pipefail
 
 # ============================================================
 # SecondaryOS
-# scripts/prepare_assets.sh — СБОРКА PROOT ЧЕРЕЗ WAF
+# scripts/prepare_assets.sh — СБОРКА PROOT ЧЕРЕЗ make
+#
+# В termux/proot нет waf/wscript. Их система сборки — make
+# в каталоге src (как в termux-packages). Makefile сам
+# собирает loader и встраивает его как бинарные данные.
+# Rootfs: Debian 11 (bullseye).
 # ============================================================
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -13,7 +18,7 @@ WORK="$(mktemp -d)"
 
 trap 'rm -rf "$WORK"' EXIT
 
-echo "=== SecondaryOS prepare_assets (waf build) ==="
+echo "=== SecondaryOS prepare_assets (make build) ==="
 echo "ROOT: $ROOT"
 
 mkdir -p "$ASSETS_DIR" "$JNILIB_DIR"
@@ -25,70 +30,118 @@ if [ "$(id -u)" -ne 0 ] && command -v sudo >/dev/null 2>&1; then
     SUDO="sudo"
 fi
 
+download_with_fallback() {
+    local out="$1"
+    shift
+    local url
+    for url in "$@"; do
+        echo "Пробую: $url"
+        if curl -sS -fL --retry 2 --connect-timeout 30 -o "$out" "$url"; then
+            echo "Скачано: $out"
+            return 0
+        fi
+    done
+    echo "ОШИБКА: не удалось скачать $out"
+    return 1
+}
+
 # ------------------------------------------------------------
-# 1. Устанавливаем кросс-компилятор и python3
+# 1. Кросс-компилятор aarch64 из репозитория Ubuntu
 # ------------------------------------------------------------
-echo "=== Устанавливаю gcc-aarch64-linux-gnu и python3 ==="
+echo "=== Устанавливаю gcc-aarch64-linux-gnu ==="
 $SUDO apt-get update -qq
-$SUDO apt-get install -y -qq \
-    gcc-aarch64-linux-gnu libc6-dev-arm64-cross \
-    python3 python3-pip
+$SUDO apt-get install -y -qq gcc-aarch64-linux-gnu libc6-dev-arm64-cross
 
-echo "Проверка python3:"
-python3 --version
+CC="aarch64-linux-gnu-gcc"
+echo "Компилятор: $CC"
+"$CC" --version | head -n 1
 
 # ------------------------------------------------------------
-# 2. Скачиваем исходники proot из ветки Termux
+# 2. talloc + заглушка replace.h + флаги вместо их сборки
+# ------------------------------------------------------------
+echo "=== Скачиваю talloc ==="
+download_with_fallback "$WORK/talloc.tar.gz" \
+    "https://www.samba.org/ftp/talloc/talloc-2.4.2.tar.gz" \
+    "https://ftp.samba.org/pub/talloc/talloc-2.4.2.tar.gz"
+
+tar -xzf "$WORK/talloc.tar.gz" -C "$WORK"
+TALLOC_DIR="$WORK/talloc-2.4.2"
+
+REPLACE_DIR="$WORK/libreplace"
+mkdir -p "$REPLACE_DIR"
+cat > "$REPLACE_DIR/replace.h" <<'EOF'
+#ifndef _REPLACE_H
+#define _REPLACE_H
+#include <stdlib.h>
+#include <string.h>
+#include <stdio.h>
+#include <stdint.h>
+#include <stdbool.h>
+#include <errno.h>
+#include <unistd.h>
+#include <sys/types.h>
+#endif
+EOF
+
+echo "=== Компилирую talloc ==="
+"$CC" -c "$TALLOC_DIR/talloc.c" \
+    -I "$TALLOC_DIR" -I "$REPLACE_DIR" \
+    -D_GNU_SOURCE -O2 \
+    -include limits.h \
+    -DTALLOC_BUILD_VERSION_MAJOR=2 \
+    -DTALLOC_BUILD_VERSION_MINOR=4 \
+    -DTALLOC_BUILD_VERSION_RELEASE=2 \
+    -D'MIN(a,b)=((a)<(b)?(a):(b))' \
+    -D'MAX(a,b)=((a)>(b)?(a):(b))' \
+    -o "$WORK/talloc.o"
+
+LIBDIR="$WORK/aarch64lib"
+mkdir -p "$LIBDIR"
+aarch64-linux-gnu-ar rcs "$LIBDIR/libtalloc.a" "$WORK/talloc.o"
+cp "$TALLOC_DIR/talloc.h" "$LIBDIR/"
+echo "libtalloc.a готова"
+
+# ------------------------------------------------------------
+# 3. Исходники proot из ветки Termux
 # ------------------------------------------------------------
 echo "=== Скачиваю proot (termux fork) ==="
-curl -sS -fL --retry 3 -o "$WORK/proot.tar.gz" \
-    "https://github.com/termux/proot/archive/refs/heads/master.tar.gz"
+download_with_fallback "$WORK/proot.tar.gz" \
+    "https://github.com/termux/proot/archive/refs/heads/master.tar.gz" \
+    "https://codeload.github.com/termux/proot/tar.gz/refs/heads/master"
 
 tar -xzf "$WORK/proot.tar.gz" -C "$WORK"
-PROOT_DIR="$(echo "$WORK"/proot-*)"
-echo "Исходники: $PROOT_DIR"
+PROOT_SRC="$(echo "$WORK"/proot-*/src)"
+echo "Исходники: $PROOT_SRC"
 
 # ------------------------------------------------------------
-# 3. Скачиваем waf отдельно (его нет в репозитории termux/proot)
+# 4. Собираем через make (их родная система сборки)
 # ------------------------------------------------------------
-echo "=== Скачиваю waf ==="
-curl -sS -fL --retry 3 -o "$PROOT_DIR/waf" \
-    "https://waf.io/waf-2.0.26"
-chmod +x "$PROOT_DIR/waf"
+echo "=== Собираю proot через make ==="
+cd "$PROOT_SRC"
 
-# ------------------------------------------------------------
-# 4. Настраиваем и собираем через waf
-# ------------------------------------------------------------
-echo "=== Настраиваю proot через waf ==="
-cd "$PROOT_DIR"
-
-# Устанавливаем кросс-компилятор в переменные окружения
-export CC="aarch64-linux-gnu-gcc"
-export CXX="aarch64-linux-gnu-g++"
-export AR="aarch64-linux-gnu-ar"
-export STRIP="aarch64-linux-gnu-strip"
-
-# waf configure с указанием целевой архитектуры
-python3 ./waf configure \
-    --target-arch=arm64 \
-    --prefix=/usr \
-    --static
-
-echo "=== Собираю proot через waf ==="
-python3 ./waf build
-
-# ------------------------------------------------------------
-# 5. Проверяем и копируем готовый бинарник
-# ------------------------------------------------------------
-PROOT_BIN="$PROOT_DIR/build/src/proot"
-
-if [[ ! -f "$PROOT_BIN" ]]; then
-    echo "ОШИБКА: waf не создал build/src/proot"
-    find "$PROOT_DIR/build" -name "proot*" || true
+if [[ ! -f Makefile ]]; then
+    echo "ОШИБКА: в src нет Makefile. Содержимое:"
+    ls -la
     exit 1
 fi
 
-echo "Проверка собранного proot:"
+# += добавляет к флагам Makefile, не ломая их
+make V=1 \
+    CC="$CC" \
+    CFLAGS+="-I$LIBDIR -I$REPLACE_DIR -D_GNU_SOURCE -D_FILE_OFFSET_BITS=64" \
+    LDFLAGS+="-static -L$LIBDIR" \
+    LDLIBS+="-ltalloc" \
+    LIBS+="-ltalloc"
+
+# Ищем готовый бинарник (make может положить его в разные места)
+PROOT_BIN="$(find "$PROOT_SRC" "$PROOT_SRC/.." -maxdepth 3 -type f -name 'proot' ! -name '*.c' | head -n 1)"
+
+if [[ -z "$PROOT_BIN" ]]; then
+    echo "ОШИБКА: make не создал бинарник proot"
+    exit 1
+fi
+
+echo "Проверка собранного proot: $PROOT_BIN"
 file "$PROOT_BIN" || true
 
 if ! file "$PROOT_BIN" | grep -qi 'aarch64'; then
@@ -101,7 +154,7 @@ if ! file "$PROOT_BIN" | grep -qi 'statically linked'; then
 fi
 
 # ------------------------------------------------------------
-# 6. Кладём proot в assets и jniLibs
+# 5. Кладём proot в assets и jniLibs
 # ------------------------------------------------------------
 cp "$PROOT_BIN" "$ASSETS_DIR/proot_static"
 chmod 0755 "$ASSETS_DIR/proot_static"
@@ -112,7 +165,7 @@ echo "proot_static и libproot.so готовы"
 echo
 
 # ------------------------------------------------------------
-# 7. Rootfs Debian 11 (bullseye)
+# 6. Rootfs Debian 11 (bullseye)
 # ------------------------------------------------------------
 echo "=== Скачиваю Debian 11 rootfs ==="
 ROOTFS_BASE_URL="https://images.linuxcontainers.org/images/debian/bullseye/arm64/default"
