@@ -5,10 +5,9 @@ set -euo pipefail
 # SecondaryOS
 # scripts/prepare_assets.sh — СБОРКА PROOT ЧЕРЕЗ GNUmakefile
 #
-# В termux/proot/src есть GNUmakefile.
-# Добавлен STRIP=aarch64-linux-gnu-strip, чтобы make не пытался
-# сжимать arm64 бинарник хостовым x86_64 strip'ом.
-# Rootfs: Debian 11 (bullseye).
+# Добавлен shim для objdump: Makefile использует системный
+# objdump, который не умеет читать arm64 объектные файлы.
+# Shim в /tmp/fake-bin перенаправляет objdump в aarch64-версию.
 # ============================================================
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -114,17 +113,33 @@ PROOT_SRC="$(echo "$WORK"/proot-*/src)"
 echo "Исходники: $PROOT_SRC"
 
 # ------------------------------------------------------------
-# 4. Собираем через make (GNUmakefile)
+# 4. Создаём shim для objdump
+# Makefile использует системный objdump, который не понимает
+# arm64 объектные файлы. Shim в /tmp/fake-bin перенаправляет
+# вызовы в aarch64-linux-gnu-objdump.
+# ------------------------------------------------------------
+echo "=== Создаю shim для objdump ==="
+FAKEBIN="/tmp/fake-bin"
+mkdir -p "$FAKEBIN"
+cat > "$FAKEBIN/objdump" <<'EOF'
+#!/bin/sh
+exec aarch64-linux-gnu-objdump "$@"
+EOF
+chmod +x "$FAKEBIN/objdump"
+
+# ------------------------------------------------------------
+# 5. Собираем через make (GNUmakefile)
 # ------------------------------------------------------------
 echo "=== Собираю proot через make ==="
 cd "$PROOT_SRC"
 
-# ВАЖНО: передаём STRIP и OBJCOPY из кросс-тулчейна, иначе
-# make попытается сжать arm64-бинарник хостовым x86_64 strip'ом и упадёт.
+# FAKEBIN в начале PATH — make найдёт наш shim objdump
+export PATH="$FAKEBIN:$PATH"
 export CC="aarch64-linux-gnu-gcc"
 export AR="aarch64-linux-gnu-ar"
 export STRIP="aarch64-linux-gnu-strip"
 export OBJCOPY="aarch64-linux-gnu-objcopy"
+export OBJDUMP="aarch64-linux-gnu-objdump"
 
 export CFLAGS="-I$LIBDIR -I$REPLACE_DIR -D_GNU_SOURCE -D_FILE_OFFSET_BITS=64 -O2"
 export LDFLAGS="-L$LIBDIR"
@@ -154,7 +169,7 @@ if ! file "$PROOT_BIN" | grep -qi 'statically linked'; then
 fi
 
 # ------------------------------------------------------------
-# 5. Кладём proot в assets и jniLibs
+# 6. Кладём proot в assets и jniLibs
 # ------------------------------------------------------------
 cp "$PROOT_BIN" "$ASSETS_DIR/proot_static"
 chmod 0755 "$ASSETS_DIR/proot_static"
@@ -165,7 +180,7 @@ echo "proot_static и libproot.so готовы"
 echo
 
 # ------------------------------------------------------------
-# 6. Rootfs Debian 11 (bullseye)
+# 7. Rootfs Debian 11 (bullseye)
 # ------------------------------------------------------------
 echo "=== Скачиваю Debian 11 rootfs ==="
 ROOTFS_BASE_URL="https://images.linuxcontainers.org/images/debian/bullseye/arm64/default"
