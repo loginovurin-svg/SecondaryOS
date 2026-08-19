@@ -5,10 +5,9 @@ set -euo pipefail
 # SecondaryOS
 # scripts/prepare_assets.sh — СБОРКА PROOT ЧЕРЕЗ GNUmakefile
 #
-# КЛЮЧЕВАЯ ПРАВКА: выключаем HAVE_PROCESS_VM и
-# HAVE_SECCOMP_FILTER. process_vm_readv ЗАПРЕЩЁН seccomp
-# Android (убивает proot сигналом 31). Без него proot
-# читает память через ptrace — это разрешено.
+# FIX: apt больше не висит. Сначала ставим пакеты БЕЗ
+# apt-get update (на раннере уже есть список пакетов).
+# update делаем только если установка не удалась.
 # ============================================================
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -46,11 +45,20 @@ download_with_fallback() {
 }
 
 # ------------------------------------------------------------
-# 1. Кросс-компилятор aarch64 из репозитория Ubuntu
+# 1. Кросс-компилятор aarch64 БЕЗ зависания на apt-get update
 # ------------------------------------------------------------
 echo "=== Устанавливаю gcc-aarch64-linux-gnu ==="
-$SUDO apt-get update -qq
-$SUDO apt-get install -y -qq gcc-aarch64-linux-gnu libc6-dev-arm64-cross binutils-aarch64-linux-gnu
+export DEBIAN_FRONTEND=noninteractive
+
+# На раннере уже есть список пакетов — пробуем без update.
+# Если не вышло (список устарел) — тогда update и повтор.
+if ! $SUDO apt-get install -y -qq \
+        gcc-aarch64-linux-gnu libc6-dev-arm64-cross binutils-aarch64-linux-gnu; then
+    echo "Установка без update не прошла, обновляю списки..."
+    $SUDO apt-get update -qq
+    $SUDO apt-get install -y -qq \
+        gcc-aarch64-linux-gnu libc6-dev-arm64-cross binutils-aarch64-linux-gnu
+fi
 
 CC="aarch64-linux-gnu-gcc"
 echo "Компилятор: $CC"
