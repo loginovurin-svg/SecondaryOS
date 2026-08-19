@@ -38,6 +38,10 @@ public class MainActivity extends Activity {
     private static final String TAG = "SecondaryOS";
     private static final int INSTALL_VERSION = 2;
 
+    // ТОЧНОЕ имя tunable для glibc 2.39 (без старого имени,
+    // чтобы glibc не отбросила всю строку)
+    private static final String GLIBC_NO_RSEQ = "glibc.pthread.rseq=0";
+
     private TextView logView;
     private Button startButton;
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
@@ -111,7 +115,14 @@ public class MainActivity extends Activity {
         File tmpDir = new File(getFilesDir(), "tmp");
         tmpDir.mkdirs();
 
-        // Тест A: uname с verbose — проверяем, жив ли proot после фикса rseq
+        // Тест D: proot БЕЗ гостя. Если печатает версию —
+        // libc стартует, проблема в создании гостя.
+        // Если 159 — проблема в старте самого бинарника.
+        List<String> d = new ArrayList<>();
+        d.add("--version");
+        testLaunch(proot, rootfs, tmpDir, "D(ver)", d, 0);
+
+        // Тест A: uname с verbose
         List<String> a = new ArrayList<>();
         a.add("/usr/bin/uname"); a.add("-a");
         testLaunch(proot, rootfs, tmpDir, "A", a, 9);
@@ -126,7 +137,7 @@ public class MainActivity extends Activity {
         c.add("/bin/bash"); c.add("-c"); c.add("echo BASH_OK");
         testLaunch(proot, rootfs, tmpDir, "C", c, 0);
 
-        log("=== Готово. Смотри результаты A/B/C ===");
+        log("=== Готово. Смотри D/A/B/C ===");
     }
 
     private void testLaunch(File proot, File rootfs, File tmpDir,
@@ -155,11 +166,8 @@ public class MainActivity extends Activity {
         pb.environment().put("PATH",
                 "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin");
         pb.environment().put("PROOT_TMP_DIR", tmpDir.getAbsolutePath());
-        // ГЛАВНЫЙ ФИКС: отключаем rseq в glibc (и у proot, и у гостя).
-        // rseq запрещён seccomp Android и убивал proot сигналом 31
-        // ещё до первого вывода.
-        pb.environment().put("GLIBC_TUNABLES",
-                "glibc.rseq=0:glibc.pthread.rseq=0");
+        // Отключаем rseq в glibc одним точным именем
+        pb.environment().put("GLIBC_TUNABLES", GLIBC_NO_RSEQ);
 
         Process p = pb.start();
 
