@@ -5,8 +5,9 @@ set -euo pipefail
 # SecondaryOS
 # scripts/prepare_assets.sh — СБОРКА PROOT ЧЕРЕЗ GNUmakefile
 #
-# В termux/proot/src есть GNUmakefile (не Makefile).
-# GNU make автоматически его находит.
+# В termux/proot/src есть GNUmakefile.
+# Добавлен STRIP=aarch64-linux-gnu-strip, чтобы make не пытался
+# сжимать arm64 бинарник хостовым x86_64 strip'ом.
 # Rootfs: Debian 11 (bullseye).
 # ============================================================
 
@@ -49,7 +50,7 @@ download_with_fallback() {
 # ------------------------------------------------------------
 echo "=== Устанавливаю gcc-aarch64-linux-gnu ==="
 $SUDO apt-get update -qq
-$SUDO apt-get install -y -qq gcc-aarch64-linux-gnu libc6-dev-arm64-cross
+$SUDO apt-get install -y -qq gcc-aarch64-linux-gnu libc6-dev-arm64-cross binutils-aarch64-linux-gnu
 
 CC="aarch64-linux-gnu-gcc"
 echo "Компилятор: $CC"
@@ -118,9 +119,13 @@ echo "Исходники: $PROOT_SRC"
 echo "=== Собираю proot через make ==="
 cd "$PROOT_SRC"
 
-# GNU make автоматически найдёт GNUmakefile
-# Передаём CC, инклуды для talloc, путь к библиотеке
-export CC
+# ВАЖНО: передаём STRIP и OBJCOPY из кросс-тулчейна, иначе
+# make попытается сжать arm64-бинарник хостовым x86_64 strip'ом и упадёт.
+export CC="aarch64-linux-gnu-gcc"
+export AR="aarch64-linux-gnu-ar"
+export STRIP="aarch64-linux-gnu-strip"
+export OBJCOPY="aarch64-linux-gnu-objcopy"
+
 export CFLAGS="-I$LIBDIR -I$REPLACE_DIR -D_GNU_SOURCE -D_FILE_OFFSET_BITS=64 -O2"
 export LDFLAGS="-L$LIBDIR"
 export LDLIBS="-ltalloc"
@@ -165,7 +170,6 @@ echo
 echo "=== Скачиваю Debian 11 rootfs ==="
 ROOTFS_BASE_URL="https://images.linuxcontainers.org/images/debian/bullseye/arm64/default"
 
-# Сервер кодирует двоеточие как %3A в HTML
 LATEST_DIR=$(curl -sS -fL "$ROOTFS_BASE_URL/" \
     | grep -oP '(?<=href=")[0-9]{8}_[0-9]{2}%3A[0-9]{2}' \
     | sort | tail -n 1)
