@@ -38,10 +38,6 @@ public class MainActivity extends Activity {
     private static final String TAG = "SecondaryOS";
     private static final int INSTALL_VERSION = 2;
 
-    // ТОЧНОЕ имя tunable для glibc 2.39 (без старого имени,
-    // чтобы glibc не отбросила всю строку)
-    private static final String GLIBC_NO_RSEQ = "glibc.pthread.rseq=0";
-
     private TextView logView;
     private Button startButton;
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
@@ -94,7 +90,7 @@ public class MainActivity extends Activity {
     }
 
     private void runDiagnostics() throws Exception {
-        log("=== Этап 0: диагностика bash ===");
+        log("=== Этап 0: чиним bash ===");
 
         File proot = prepareProot();
         log("proot: exists=" + proot.exists() + " exec=" + proot.canExecute());
@@ -112,32 +108,51 @@ public class MainActivity extends Activity {
             log("Rootfs уже распакован.");
         }
 
+        // ФИКС: nsswitch только на files, без systemd-модулей.
+        // Смерть bash коррелировала с загрузкой NSS.
+        rewriteNsswitch(rootfs);
+
         File tmpDir = new File(getFilesDir(), "tmp");
         tmpDir.mkdirs();
 
-        // Тест D: proot БЕЗ гостя. Если печатает версию —
-        // libc стартует, проблема в создании гостя.
-        // Если 159 — проблема в старте самого бинарника.
-        List<String> d = new ArrayList<>();
-        d.add("--version");
-        testLaunch(proot, rootfs, tmpDir, "D(ver)", d, 0);
-
-        // Тест A: uname с verbose
+        // Тест A: uname (контроль, что proot живой)
         List<String> a = new ArrayList<>();
         a.add("/usr/bin/uname"); a.add("-a");
-        testLaunch(proot, rootfs, tmpDir, "A", a, 9);
+        testLaunch(proot, rootfs, tmpDir, "A", a, 0);
 
         // Тест B: sh
         List<String> b = new ArrayList<>();
         b.add("/bin/sh"); b.add("-c"); b.add("echo SH_OK");
         testLaunch(proot, rootfs, tmpDir, "B", b, 0);
 
-        // Тест C: bash — главная цель
+        // Тест C: bash с verbose — если умрёт, хвост покажет вызов
         List<String> c = new ArrayList<>();
         c.add("/bin/bash"); c.add("-c"); c.add("echo BASH_OK");
-        testLaunch(proot, rootfs, tmpDir, "C", c, 0);
+        testLaunch(proot, rootfs, tmpDir, "C", c, 9);
 
-        log("=== Готово. Смотри D/A/B/C ===");
+        // Тест E: bash с ПУСТЫМ окружением (env -i)
+        List<String> e = new ArrayList<>();
+        e.add("/usr/bin/env"); e.add("-i");
+        e.add("/bin/bash"); e.add("-c"); e.add("echo BASH_ENV_OK");
+        testLaunch(proot, rootfs, tmpDir, "E", e, 0);
+
+        log("=== Готово. Смотри A/B/C/E ===");
+    }
+
+    // Переписываем nsswitch.conf гостя на чистый files
+    private void rewriteNsswitch(File rootfs) {
+        File nss = new File(rootfs, "etc/nsswitch.conf");
+        writeFile(nss,
+                "passwd: files\n" +
+                "group: files\n" +
+                "shadow: files\n" +
+                "hosts: files dns\n" +
+                "networks: files\n" +
+                "protocols: files\n" +
+                "services: files\n" +
+                "ethers: files\n" +
+                "rpc: files\n");
+        log("nsswitch.conf переписан на files");
     }
 
     private void testLaunch(File proot, File rootfs, File tmpDir,
@@ -166,8 +181,6 @@ public class MainActivity extends Activity {
         pb.environment().put("PATH",
                 "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin");
         pb.environment().put("PROOT_TMP_DIR", tmpDir.getAbsolutePath());
-        // Отключаем rseq в glibc одним точным именем
-        pb.environment().put("GLIBC_TUNABLES", GLIBC_NO_RSEQ);
 
         Process p = pb.start();
 
@@ -323,7 +336,7 @@ public class MainActivity extends Activity {
         try (FileOutputStream fos = new FileOutputStream(f)) {
             fos.write(text.getBytes());
         } catch (Throwable t) {
-            log("Не удалось записать маркер: " + t.getMessage());
+            log("Не удалось записать файл: " + t.getMessage());
         }
     }
 }
