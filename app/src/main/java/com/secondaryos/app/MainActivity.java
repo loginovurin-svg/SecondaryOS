@@ -17,18 +17,14 @@ import org.apache.commons.compress.archivers.tar.TarArchiveInputStream;
 import org.apache.commons.compress.compressors.xz.XZCompressorInputStream;
 
 import java.io.BufferedInputStream;
-import java.io.BufferedReader;
-import java.io.BufferedWriter;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
-import java.io.FileWriter;
 import java.io.InputStream;
 import java.io.InputStreamReader;
+import java.io.BufferedReader;
 import java.nio.file.Files;
-import java.util.ArrayDeque;
 import java.util.ArrayList;
-import java.util.Deque;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -36,7 +32,9 @@ import java.util.concurrent.Executors;
 public class MainActivity extends Activity {
 
     private static final String TAG = "SecondaryOS";
-    private static final int INSTALL_VERSION = 1;
+    // Поднята до 2: заставляет перераспаковать rootfs bullseye
+    // поверх старого bookworm
+    private static final int INSTALL_VERSION = 2;
 
     private TextView logView;
     private Button startButton;
@@ -90,7 +88,7 @@ public class MainActivity extends Activity {
     }
 
     private void runDiagnostics() throws Exception {
-        log("=== Начало диагностики ===");
+        log("=== Этап 0: вариант B (Debian 11) ===");
 
         File proot = prepareProot();
         log("proot: " + proot.getAbsolutePath() +
@@ -102,7 +100,7 @@ public class MainActivity extends Activity {
         String markerText = marker.exists() ? readFile(marker) : "";
 
         if (!markerText.equals(String.valueOf(INSTALL_VERSION)) || !rootfs.exists()) {
-            log("Распаковываю rootfs...");
+            log("Распаковываю rootfs (несколько минут)...");
             if (rootfs.exists()) deleteRecursively(rootfs);
             extractRootfs(rootfs);
             writeFile(marker, String.valueOf(INSTALL_VERSION));
@@ -114,32 +112,29 @@ public class MainActivity extends Activity {
         File tmpDir = new File(getFilesDir(), "tmp");
         tmpDir.mkdirs();
 
-        // Тест A: ПОЛНЫЙ verbose-лог proot, пишем в файл,
-        // на экран выводим только хвост
+        // Тест A: прямой ELF
         List<String> a = new ArrayList<>();
         a.add("/usr/bin/uname"); a.add("-a");
-        testLaunch(proot, rootfs, tmpDir, "A", a, 9);
+        testLaunch(proot, rootfs, tmpDir, "A", a);
 
-        // Тест B: sh без verbose
+        // Тест B: sh
         List<String> b = new ArrayList<>();
         b.add("/bin/sh"); b.add("-c"); b.add("echo SH_OK");
-        testLaunch(proot, rootfs, tmpDir, "B", b, 0);
+        testLaunch(proot, rootfs, tmpDir, "B", b);
 
-        log("=== Диагностика завершена ===");
-        log("Прокрути вверх: нужен ХВОСТ теста A.");
+        // Тест C: bash + версия Debian
+        List<String> c = new ArrayList<>();
+        c.add("/bin/bash"); c.add("-c");
+        c.add("echo BASH_OK; head -2 /etc/os-release");
+        testLaunch(proot, rootfs, tmpDir, "C", c);
+
+        log("=== Готово. Если видишь SH_OK/BASH_OK — этап 0 закрыт ===");
     }
 
-    // Запуск proot. verboseLevel=9 пишет полный лог в файл
-    // и показывает на экране последние 50 строк.
     private void testLaunch(File proot, File rootfs, File tmpDir,
-                            String fileKey, List<String> guestCmd,
-                            int verboseLevel) throws Exception {
+                            String tag, List<String> guestCmd) throws Exception {
         List<String> cmd = new ArrayList<>();
         cmd.add(proot.getAbsolutePath());
-        if (verboseLevel > 0) {
-            cmd.add("-v");
-            cmd.add(String.valueOf(verboseLevel));
-        }
         cmd.add("-r"); cmd.add(rootfs.getAbsolutePath());
         cmd.add("-b"); cmd.add("/dev");
         cmd.add("-b"); cmd.add("/proc");
@@ -147,7 +142,7 @@ public class MainActivity extends Activity {
         cmd.add("-b"); cmd.add(tmpDir.getAbsolutePath() + ":/tmp");
         cmd.addAll(guestCmd);
 
-        log("--- Тест " + fileKey + " ---");
+        log("--- Тест " + tag + " ---");
 
         ProcessBuilder pb = new ProcessBuilder(cmd);
         pb.directory(rootfs);
@@ -157,36 +152,17 @@ public class MainActivity extends Activity {
         pb.environment().put("PATH",
                 "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin");
         pb.environment().put("PROOT_TMP_DIR", tmpDir.getAbsolutePath());
-        pb.environment().put("GLIBC_TUNABLES",
-                "glibc.rseq=0:glibc.pthread.rseq=0");
 
         Process p = pb.start();
-
-        File outFile = new File(getFilesDir(), "proot_log_" + fileKey + ".txt");
-        Deque<String> tail = new ArrayDeque<>();
-        int total = 0;
-
-        try (BufferedWriter bw = new BufferedWriter(new FileWriter(outFile));
-             BufferedReader br = new BufferedReader(
-                     new InputStreamReader(p.getInputStream()))) {
+        try (BufferedReader br = new BufferedReader(
+                new InputStreamReader(p.getInputStream()))) {
             String line;
             while ((line = br.readLine()) != null) {
-                bw.write(line);
-                bw.newLine();
-                total++;
-                tail.addLast(line);
-                if (tail.size() > 50) tail.removeFirst();
+                log("[" + tag + "] " + line);
             }
         }
-
         int code = p.waitFor();
-        log("Тест " + fileKey + " код выхода: " + code +
-                ", всего строк: " + total +
-                ", файл: " + outFile.getName());
-        log("--- ХВОСТ теста " + fileKey + " ---");
-        for (String l : tail) {
-            log("[" + fileKey + "] " + l);
-        }
+        log("Тест " + tag + " код выхода: " + code);
     }
 
     private File prepareProot() throws Exception {
