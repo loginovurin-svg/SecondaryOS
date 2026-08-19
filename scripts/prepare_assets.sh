@@ -5,8 +5,10 @@ set -euo pipefail
 # SecondaryOS
 # scripts/prepare_assets.sh — СБОРКА PROOT ЧЕРЕЗ GNUmakefile
 #
-# Исправлен LDFLAGS: добавлен -static, чтобы proot слинковался
-# статически с libc и libtalloc.
+# КЛЮЧЕВАЯ ПРАВКА: выключаем HAVE_PROCESS_VM и
+# HAVE_SECCOMP_FILTER. process_vm_readv ЗАПРЕЩЁН seccomp
+# Android (убивает proot сигналом 31). Без него proot
+# читает память через ptrace — это разрешено.
 # ============================================================
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -124,14 +126,20 @@ EOF
 chmod +x "$FAKEBIN/objdump"
 
 # ------------------------------------------------------------
-# 5. Удаляем 32-битный loader из GNUmakefile
+# 5. Патчим GNUmakefile
 # ------------------------------------------------------------
-echo "=== Патчу GNUmakefile: удаляю 32-битный loader ==="
+echo "=== Патчу GNUmakefile ==="
 cd "$PROOT_SRC"
 
 if [[ -f GNUmakefile ]]; then
+    # Убираем 32-битный loader (arm64 gcc не имеет -m32)
     sed -i '/loader-m32/d' GNUmakefile
     sed -i '/-m32/d' GNUmakefile
+    # ВЫКЛЮЧАЕМ process_vm_readv: запрещён seccomp Android,
+    # proot будет читать память через ptrace (разрешено)
+    sed -i 's/#define HAVE_PROCESS_VM//' GNUmakefile
+    # Выключаем seccomp-ускорение proot для надёжности на Android
+    sed -i 's/#define HAVE_SECCOMP_FILTER//' GNUmakefile
     echo "GNUmakefile пропатчен"
 else
     echo "ОШИБКА: GNUmakefile не найден"
@@ -151,7 +159,6 @@ export OBJCOPY="aarch64-linux-gnu-objcopy"
 export OBJDUMP="aarch64-linux-gnu-objdump"
 
 export CFLAGS="-I$LIBDIR -I$REPLACE_DIR -D_GNU_SOURCE -D_FILE_OFFSET_BITS=64 -O2"
-# ВАЖНО: добавлен -static для полной статической линковки
 export LDFLAGS="-static -L$LIBDIR"
 export LDLIBS="-ltalloc"
 
