@@ -123,7 +123,7 @@ public class MainActivity extends Activity {
                 runDiagnostics();
                 startInteractiveShell();
             } catch (Throwable t) {
-                log("✗ КРИТИЧЕСКАЯ ОШИБКА: " + t.getMessage());
+                log(" КРИТИЧЕСКАЯ ОШИБКА: " + t.getMessage());
                 Log.e(TAG, "fatal", t);
             } finally {
                 mainHandler.post(() -> {
@@ -159,7 +159,7 @@ public class MainActivity extends Activity {
         File tmpDir = new File(getFilesDir(), "tmp");
         tmpDir.mkdirs();
 
-        // Быстрые тесты жизнеспособности с флагом -L
+        // Тесты без флага -L
         List<String> a = new ArrayList<>();
         a.add("/usr/bin/uname"); a.add("-a");
         testLaunch(proot, rootfs, tmpDir, "A", a);
@@ -176,19 +176,21 @@ public class MainActivity extends Activity {
         File rootfs = new File(getFilesDir(), "debian");
         File tmpDir = new File(getFilesDir(), "tmp");
 
-        // Формируем команду proot с критически важными флагами
+        // Формируем команду proot БЕЗ флага -L (он не поддерживается)
         List<String> cmd = new ArrayList<>();
         cmd.add(proot.getAbsolutePath());
         cmd.add("-0");                    // Эмуляция root (обязательно!)
-        cmd.add("-L");                    // Эмуляция ld.so — ОБХОДИТ seccomp на Android 16!
         cmd.add("-r"); cmd.add(rootfs.getAbsolutePath());
         cmd.add("-b"); cmd.add("/dev");
         cmd.add("-b"); cmd.add("/proc");
         cmd.add("-b"); cmd.add("/sys");
         cmd.add("-b"); cmd.add(tmpDir.getAbsolutePath() + ":/tmp");
-        cmd.add("-b"); cmd.add(getFilesDir().getAbsolutePath() + ":/host"); // Для Фазы 2
-        cmd.add("-w"); cmd.add("/root");  // Рабочая директория
-        cmd.add("/bin/sh");               // Используем sh вместо bash (меньше системных вызовов)
+        cmd.add("-b"); cmd.add(getFilesDir().getAbsolutePath() + ":/host");
+        cmd.add("-w"); cmd.add("/root");
+        // Добавляем флаги для обхода seccomp на Android 16
+        cmd.add("--link2symlink");       // Преобразует hardlink в symlink
+        cmd.add("-v"); cmd.add("1");     // Минимальный verbose для отладки
+        cmd.add("/bin/sh");              // Используем sh вместо bash
 
         ProcessBuilder pb = new ProcessBuilder(cmd);
         pb.directory(rootfs);
@@ -204,11 +206,10 @@ public class MainActivity extends Activity {
         bashOut = bashProcess.getInputStream();
 
         log("--- Терминал запущен. Введите команду. ---");
-        log("--- Флаг -L активен (обход seccomp) ---");
 
         // Читаем вывод из bash в фоновом потоке
         new Thread(() -> {
-            byte[] buffer = new byte[2048];  // Увеличенный буфер
+            byte[] buffer = new byte[2048];
             int len;
             try {
                 while ((len = bashOut.read(buffer)) != -1) {
@@ -216,7 +217,7 @@ public class MainActivity extends Activity {
                     mainHandler.post(() -> logView.append(text));
                 }
             } catch (Exception e) {
-                mainHandler.post(() -> logView.append("\n[Соединение с bash разорвано]\n"));
+                mainHandler.post(() -> logView.append("\n[Соединение разорвано]\n"));
             }
         }).start();
     }
@@ -256,7 +257,6 @@ public class MainActivity extends Activity {
         List<String> cmd = new ArrayList<>();
         cmd.add(proot.getAbsolutePath());
         cmd.add("-0");   // Эмуляция root
-        cmd.add("-L");   // Эмуляция ld.so — критично для Android 16!
         cmd.add("-r"); cmd.add(rootfs.getAbsolutePath());
         cmd.add("-b"); cmd.add("/dev");
         cmd.add("-b"); cmd.add("/proc");
