@@ -7,7 +7,10 @@ import android.os.Handler;
 import android.os.Looper;
 import android.system.Os;
 import android.util.Log;
+import android.view.Gravity;
+import android.view.inputmethod.EditorInfo;
 import android.widget.Button;
+import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
@@ -18,17 +21,14 @@ import org.apache.commons.compress.compressors.xz.XZCompressorInputStream;
 
 import java.io.BufferedInputStream;
 import java.io.BufferedReader;
-import java.io.BufferedWriter;
 import java.io.File;
-import java.io.FileInputStream;
 import java.io.FileOutputStream;
-import java.io.FileWriter;
 import java.io.InputStream;
 import java.io.InputStreamReader;
+import java.io.OutputStream;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
-import java.util.ArrayDeque;
 import java.util.ArrayList;
-import java.util.Deque;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -40,58 +40,104 @@ public class MainActivity extends Activity {
 
     private TextView logView;
     private Button startButton;
+    private EditText commandInput;
+    private Button sendButton;
+    
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private final ExecutorService executor = Executors.newSingleThreadExecutor();
+    
+    // Переменные для интерактивного терминала
+    private Process bashProcess;
+    private OutputStream bashIn;
+    private InputStream bashOut;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
 
+        // Создаем UI программно (удобно для редактирования с телефона)
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
-        root.setPadding(24, 24, 24, 24);
+        root.setPadding(16, 16, 16, 16);
 
         startButton = new Button(this);
-        startButton.setText("ЗАПУСТИТЬ LINUX (ЭТАП 0)");
+        startButton.setText("ПОДГОТОВИТЬ И ЗАПУСТИТЬ ТЕРМИНАЛ");
         root.addView(startButton);
 
         ScrollView scroll = new ScrollView(this);
+        scroll.setFillViewport(true);
         logView = new TextView(this);
         logView.setTypeface(Typeface.MONOSPACE);
-        logView.setTextSize(11f);
-        logView.setText("Логи будут здесь...\n");
+        logView.setTextSize(12f);
+        logView.setText("Ожидание запуска...\n");
         scroll.addView(logView);
         root.addView(scroll, new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.MATCH_PARENT));
+                LinearLayout.LayoutParams.MATCH_PARENT, 0, 1.0f));
+
+        // Панель ввода команд
+        LinearLayout inputPanel = new LinearLayout(this);
+        inputPanel.setOrientation(LinearLayout.HORIZONTAL);
+        inputPanel.setGravity(Gravity.CENTER_VERTICAL);
+
+        commandInput = new EditText(this);
+        commandInput.setHint("Введите команду (например, ls)");
+        commandInput.setTypeface(Typeface.MONOSPACE);
+        commandInput.setTextSize(14f);
+        commandInput.setSingleLine(true);
+        commandInput.setImeOptions(EditorInfo.IME_ACTION_SEND);
+        commandInput.setEnabled(false); 
+        
+        commandInput.setOnEditorActionListener((v, actionId, event) -> {
+            if (actionId == EditorInfo.IME_ACTION_SEND) {
+                sendCommand();
+                return true;
+            }
+            return false;
+        });
+
+        sendButton = new Button(this);
+        sendButton.setText("➔");
+        sendButton.setEnabled(false);
+        sendButton.setOnClickListener(v -> sendCommand());
+
+        inputPanel.addView(commandInput, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1.0f));
+        inputPanel.addView(sendButton, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.MATCH_PARENT));
+        root.addView(inputPanel, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
 
         setContentView(root);
-
         startButton.setOnClickListener(v -> startLinux());
     }
 
     private void log(String msg) {
         Log.i(TAG, msg);
-        mainHandler.post(() -> logView.append(msg + "\n"));
+        mainHandler.post(() -> {
+            logView.append(msg + "\n");
+        });
     }
 
     private void startLinux() {
         startButton.setEnabled(false);
+        log("=== Инициализация окружения ===");
         executor.execute(() -> {
             try {
                 runDiagnostics();
+                startInteractiveShell();
             } catch (Throwable t) {
-                log("✗ КРИТИЧЕСКАЯ ОШИБКА: " + t);
+                log("✗ КРИТИЧЕСКАЯ ОШИБКА: " + t.getMessage());
                 Log.e(TAG, "fatal", t);
             } finally {
-                mainHandler.post(() -> startButton.setEnabled(true));
+                mainHandler.post(() -> {
+                    startButton.setText("ПЕРЕЗАПУСТИТЬ");
+                    startButton.setEnabled(true);
+                    commandInput.setEnabled(true);
+                    sendButton.setEnabled(true);
+                    commandInput.requestFocus();
+                });
             }
         });
     }
 
     private void runDiagnostics() throws Exception {
-        log("=== Этап 0: чиним bash ===");
-
         File proot = prepareProot();
         log("proot: exists=" + proot.exists() + " exec=" + proot.canExecute());
 
@@ -100,7 +146,7 @@ public class MainActivity extends Activity {
         String markerText = marker.exists() ? readFile(marker) : "";
 
         if (!markerText.equals(String.valueOf(INSTALL_VERSION)) || !rootfs.exists()) {
-            log("Распаковываю rootfs...");
+            log("Распаковываю rootfs (это может занять время)...");
             if (rootfs.exists()) deleteRecursively(rootfs);
             extractRootfs(rootfs);
             writeFile(marker, String.valueOf(INSTALL_VERSION));
@@ -108,38 +154,85 @@ public class MainActivity extends Activity {
             log("Rootfs уже распакован.");
         }
 
-        // ФИКС: nsswitch только на files, без systemd-модулей.
-        // Смерть bash коррелировала с загрузкой NSS.
         rewriteNsswitch(rootfs);
 
         File tmpDir = new File(getFilesDir(), "tmp");
         tmpDir.mkdirs();
 
-        // Тест A: uname (контроль, что proot живой)
+        // Быстрые тесты жизнеспособности
         List<String> a = new ArrayList<>();
         a.add("/usr/bin/uname"); a.add("-a");
-        testLaunch(proot, rootfs, tmpDir, "A", a, 0);
+        testLaunch(proot, rootfs, tmpDir, "A", a);
 
-        // Тест B: sh
-        List<String> b = new ArrayList<>();
-        b.add("/bin/sh"); b.add("-c"); b.add("echo SH_OK");
-        testLaunch(proot, rootfs, tmpDir, "B", b, 0);
-
-        // Тест C: bash с verbose — если умрёт, хвост покажет вызов
         List<String> c = new ArrayList<>();
         c.add("/bin/bash"); c.add("-c"); c.add("echo BASH_OK");
-        testLaunch(proot, rootfs, tmpDir, "C", c, 9);
+        testLaunch(proot, rootfs, tmpDir, "C", c);
 
-        // Тест E: bash с ПУСТЫМ окружением (env -i)
-        List<String> e = new ArrayList<>();
-        e.add("/usr/bin/env"); e.add("-i");
-        e.add("/bin/bash"); e.add("-c"); e.add("echo BASH_ENV_OK");
-        testLaunch(proot, rootfs, tmpDir, "E", e, 0);
-
-        log("=== Готово. Смотри A/B/C/E ===");
+        log("=== Диагностика пройдена успешно ===");
     }
 
-    // Переписываем nsswitch.conf гостя на чистый files
+    private void startInteractiveShell() throws Exception {
+        File proot = prepareProot();
+        File rootfs = new File(getFilesDir(), "debian");
+        File tmpDir = new File(getFilesDir(), "tmp");
+
+        List<String> cmd = new ArrayList<>();
+        cmd.add(proot.getAbsolutePath());
+        cmd.add("-r"); cmd.add(rootfs.getAbsolutePath());
+        cmd.add("-b"); cmd.add("/dev");
+        cmd.add("-b"); cmd.add("/proc");
+        cmd.add("-b"); cmd.add("/sys");
+        cmd.add("-b"); cmd.add(tmpDir.getAbsolutePath() + ":/tmp");
+        cmd.add("-b"); cmd.add(getFilesDir().getAbsolutePath() + ":/host"); // Для Фазы 2
+        cmd.add("/bin/bash");
+        cmd.add("--norc");
+        cmd.add("--noprofile");
+
+        ProcessBuilder pb = new ProcessBuilder(cmd);
+        pb.directory(rootfs);
+        pb.redirectErrorStream(true);
+        pb.environment().put("HOME", "/root");
+        pb.environment().put("TERM", "xterm-256color");
+        pb.environment().put("PS1", "\\u@debian:\\w$ ");
+        pb.environment().put("PROOT_TMP_DIR", tmpDir.getAbsolutePath());
+
+        bashProcess = pb.start();
+        bashIn = bashProcess.getOutputStream();
+        bashOut = bashProcess.getInputStream();
+
+        log("--- Терминал запущен. Введите команду. ---");
+
+        new Thread(() -> {
+            byte[] buffer = new byte[1024];
+            int len;
+            try {
+                while ((len = bashOut.read(buffer)) != -1) {
+                    String text = new String(buffer, 0, len, StandardCharsets.UTF_8);
+                    mainHandler.post(() -> logView.append(text));
+                }
+            } catch (Exception e) {
+                mainHandler.post(() -> logView.append("\n[Соединение с bash разорвано]\n"));
+            }
+        }).start();
+    }
+
+    private void sendCommand() {
+        String cmd = commandInput.getText().toString();
+        if (cmd.isEmpty()) return;
+        
+        logView.append("\n$ " + cmd + "\n");
+        commandInput.setText("");
+
+        if (bashIn != null) {
+            try {
+                bashIn.write((cmd + "\n").getBytes(StandardCharsets.UTF_8));
+                bashIn.flush();
+            } catch (Exception e) {
+                log("Ошибка отправки: " + e.getMessage());
+            }
+        }
+    }
+
     private void rewriteNsswitch(File rootfs) {
         File nss = new File(rootfs, "etc/nsswitch.conf");
         writeFile(nss,
@@ -152,18 +245,11 @@ public class MainActivity extends Activity {
                 "services: files\n" +
                 "ethers: files\n" +
                 "rpc: files\n");
-        log("nsswitch.conf переписан на files");
     }
 
-    private void testLaunch(File proot, File rootfs, File tmpDir,
-                            String tag, List<String> guestCmd,
-                            int verboseLevel) throws Exception {
+    private void testLaunch(File proot, File rootfs, File tmpDir, String tag, List<String> guestCmd) throws Exception {
         List<String> cmd = new ArrayList<>();
         cmd.add(proot.getAbsolutePath());
-        if (verboseLevel > 0) {
-            cmd.add("-v");
-            cmd.add(String.valueOf(verboseLevel));
-        }
         cmd.add("-r"); cmd.add(rootfs.getAbsolutePath());
         cmd.add("-b"); cmd.add("/dev");
         cmd.add("-b"); cmd.add("/proc");
@@ -171,49 +257,22 @@ public class MainActivity extends Activity {
         cmd.add("-b"); cmd.add(tmpDir.getAbsolutePath() + ":/tmp");
         cmd.addAll(guestCmd);
 
-        log("--- Тест " + tag + " ---");
-
         ProcessBuilder pb = new ProcessBuilder(cmd);
         pb.directory(rootfs);
         pb.redirectErrorStream(true);
         pb.environment().put("HOME", "/root");
-        pb.environment().put("TERM", "xterm");
-        pb.environment().put("PATH",
-                "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin");
         pb.environment().put("PROOT_TMP_DIR", tmpDir.getAbsolutePath());
 
         Process p = pb.start();
-
-        if (verboseLevel > 0) {
-            File outFile = new File(getFilesDir(), "proot_log_" + tag + ".txt");
-            Deque<String> tail = new ArrayDeque<>();
-            int total = 0;
-            try (BufferedWriter bw = new BufferedWriter(new FileWriter(outFile));
-                 BufferedReader br = new BufferedReader(
-                         new InputStreamReader(p.getInputStream()))) {
-                String line;
-                while ((line = br.readLine()) != null) {
-                    bw.write(line);
-                    bw.newLine();
-                    total++;
-                    tail.addLast(line);
-                    if (tail.size() > 40) tail.removeFirst();
-                }
+        try (BufferedReader br = new BufferedReader(new InputStreamReader(p.getInputStream()))) {
+            String line;
+            while ((line = br.readLine()) != null) {
+                log("[" + tag + "] " + line);
             }
-            int code = p.waitFor();
-            log("Тест " + tag + " код: " + code + ", строк: " + total);
-            log("--- ХВОСТ теста " + tag + " ---");
-            for (String l : tail) log("[" + tag + "] " + l);
-        } else {
-            try (BufferedReader br = new BufferedReader(
-                    new InputStreamReader(p.getInputStream()))) {
-                String line;
-                while ((line = br.readLine()) != null) {
-                    log("[" + tag + "] " + line);
-                }
-            }
-            int code = p.waitFor();
-            log("Тест " + tag + " код выхода: " + code);
+        }
+        int code = p.waitFor();
+        if (code != 0) {
+            throw new Exception("Тест " + tag + " завершился с кодом " + code);
         }
     }
 
@@ -222,7 +281,6 @@ public class MainActivity extends Activity {
         if (libProot.exists() && libProot.canExecute()) {
             return libProot;
         }
-
         File proot = new File(getFilesDir(), "proot");
         if (!proot.exists() || proot.length() == 0) {
             try (InputStream in = getAssets().open("proot_static");
@@ -242,8 +300,7 @@ public class MainActivity extends Activity {
         int count = 0;
 
         try (InputStream raw = getAssets().open("debian-rootfs.tar.xz");
-             XZCompressorInputStream xz =
-                     new XZCompressorInputStream(new BufferedInputStream(raw, 1 << 20));
+             XZCompressorInputStream xz = new XZCompressorInputStream(new BufferedInputStream(raw, 1 << 20));
              TarArchiveInputStream tar = new TarArchiveInputStream(xz)) {
 
             TarArchiveEntry entry;
@@ -262,11 +319,8 @@ public class MainActivity extends Activity {
                 } else if (entry.isSymbolicLink()) {
                     out.getParentFile().mkdirs();
                     if (out.exists()) out.delete();
-                    try {
-                        Os.symlink(entry.getLinkName(), out.getAbsolutePath());
-                    } catch (Throwable t) {
-                        log("symlink ошибка: " + name);
-                    }
+                    try { Os.symlink(entry.getLinkName(), out.getAbsolutePath()); } 
+                    catch (Throwable t) { log("symlink ошибка: " + name); }
                 } else if (entry.isLink()) {
                     out.getParentFile().mkdirs();
                     String target = entry.getLinkName();
@@ -274,12 +328,8 @@ public class MainActivity extends Activity {
                     while (target.startsWith("/")) target = target.substring(1);
                     File targetFile = new File(rootfs, target);
                     if (targetFile.exists()) {
-                        try {
-                            Os.link(targetFile.getAbsolutePath(), out.getAbsolutePath());
-                        } catch (Throwable t) {
-                            copyFile(targetFile, out);
-                            safeChmod(out, entry.getMode() & 07777, false);
-                        }
+                        try { Os.link(targetFile.getAbsolutePath(), out.getAbsolutePath()); } 
+                        catch (Throwable t) { copyFile(targetFile, out); safeChmod(out, entry.getMode() & 07777, false); }
                     }
                 } else {
                     out.getParentFile().mkdirs();
@@ -290,7 +340,6 @@ public class MainActivity extends Activity {
                     }
                     safeChmod(out, entry.getMode() & 07777, false);
                 }
-
                 count++;
                 if (count % 2000 == 0) log("Распаковано записей: " + count);
             }
@@ -299,7 +348,7 @@ public class MainActivity extends Activity {
     }
 
     private void copyFile(File src, File dst) throws Exception {
-        try (FileInputStream in = new FileInputStream(src);
+        try (java.io.FileInputStream in = new java.io.FileInputStream(src);
              FileOutputStream out = new FileOutputStream(dst)) {
             byte[] buf = new byte[65536];
             int n;
@@ -325,11 +374,8 @@ public class MainActivity extends Activity {
     }
 
     private String readFile(File f) {
-        try {
-            return new String(Files.readAllBytes(f.toPath())).trim();
-        } catch (Throwable t) {
-            return "";
-        }
+        try { return new String(Files.readAllBytes(f.toPath())).trim(); } 
+        catch (Throwable t) { return ""; }
     }
 
     private void writeFile(File f, String text) {
@@ -337,6 +383,14 @@ public class MainActivity extends Activity {
             fos.write(text.getBytes());
         } catch (Throwable t) {
             log("Не удалось записать файл: " + t.getMessage());
+        }
+    }
+    
+    @Override
+    protected void onDestroy() {
+        super.onDestroy();
+        if (bashProcess != null) {
+            bashProcess.destroy();
         }
     }
 }
