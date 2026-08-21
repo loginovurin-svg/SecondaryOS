@@ -33,6 +33,13 @@ sudo apt-get install -y -qq build-essential gcc-aarch64-linux-gnu
 echo "=== Компилирую toybox для ARM64 ==="
 cd "$WORK"
 
+# Создаём симлинки для toybox (он ищет *-cc, *-ld и т.д.)
+sudo ln -sf /usr/bin/aarch64-linux-gnu-gcc /usr/local/bin/aarch64-linux-gnu-cc
+sudo ln -sf /usr/bin/aarch64-linux-gnu-g++ /usr/local/bin/aarch64-linux-gnu-c++
+sudo ln -sf /usr/bin/aarch64-linux-gnu-ld /usr/local/bin/aarch64-linux-gnu-ld
+sudo ln -sf /usr/bin/aarch64-linux-gnu-ar /usr/local/bin/aarch64-linux-gnu-ar
+sudo ln -sf /usr/bin/aarch64-linux-gnu-strip /usr/local/bin/aarch64-linux-gnu-strip
+
 echo "Скачиваю исходники toybox..."
 curl -sS -fL --retry 3 -o toybox.tar.gz \
     "https://github.com/landley/toybox/archive/refs/tags/0.8.9.tar.gz"
