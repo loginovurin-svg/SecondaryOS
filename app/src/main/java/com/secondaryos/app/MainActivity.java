@@ -178,12 +178,14 @@ public class MainActivity extends Activity {
 
         List<String> cmd = new ArrayList<>();
         cmd.add(proot.getAbsolutePath());
+        cmd.add("-0");  // Эмуляция root (ВАЖНО для Android 16!)
         cmd.add("-r"); cmd.add(rootfs.getAbsolutePath());
         cmd.add("-b"); cmd.add("/dev");
         cmd.add("-b"); cmd.add("/proc");
         cmd.add("-b"); cmd.add("/sys");
         cmd.add("-b"); cmd.add(tmpDir.getAbsolutePath() + ":/tmp");
         cmd.add("-b"); cmd.add(getFilesDir().getAbsolutePath() + ":/host"); // Для Фазы 2
+        cmd.add("-w"); cmd.add("/root");  // Рабочая директория
         cmd.add("/bin/bash");
         cmd.add("--norc");
         cmd.add("--noprofile");
@@ -194,6 +196,7 @@ public class MainActivity extends Activity {
         pb.environment().put("HOME", "/root");
         pb.environment().put("TERM", "xterm-256color");
         pb.environment().put("PS1", "\\u@debian:\\w$ ");
+        pb.environment().put("PATH", "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin");  // ВАЖНО!
         pb.environment().put("PROOT_TMP_DIR", tmpDir.getAbsolutePath());
 
         bashProcess = pb.start();
@@ -250,6 +253,7 @@ public class MainActivity extends Activity {
     private void testLaunch(File proot, File rootfs, File tmpDir, String tag, List<String> guestCmd) throws Exception {
         List<String> cmd = new ArrayList<>();
         cmd.add(proot.getAbsolutePath());
+        cmd.add("-0");  // Эмуляция root
         cmd.add("-r"); cmd.add(rootfs.getAbsolutePath());
         cmd.add("-b"); cmd.add("/dev");
         cmd.add("-b"); cmd.add("/proc");
@@ -261,6 +265,7 @@ public class MainActivity extends Activity {
         pb.directory(rootfs);
         pb.redirectErrorStream(true);
         pb.environment().put("HOME", "/root");
+        pb.environment().put("PATH", "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin");
         pb.environment().put("PROOT_TMP_DIR", tmpDir.getAbsolutePath());
 
         Process p = pb.start();
