@@ -12,7 +12,7 @@ echo "=== SecondaryOS prepare_assets ==="
 
 mkdir -p "$ASSETS_DIR" "$JNILIB_DIR"
 rm -f "$ASSETS_DIR/proot_static" "$JNILIB_DIR/libproot.so" \
-      "$ASSETS_DIR/debian-rootfs.tar.xz" "$ASSETS_DIR/busybox"
+      "$ASSETS_DIR/debian-rootfs.tar.xz" "$ASSETS_DIR/toybox"
 
 # 1. Proot
 echo "=== Скачиваю proot ==="
@@ -25,41 +25,37 @@ cp "$WORK/proot" "$JNILIB_DIR/libproot.so"
 chmod 0755 "$JNILIB_DIR/libproot.so"
 echo "[OK] proot готов"
 
-# 2. Busybox
+# 2. Toybox (компиляция из исходников)
 echo "=== Устанавливаю кросс-компилятор ==="
 sudo apt-get update -qq
-sudo apt-get install -y -qq build-essential bzip2 gcc-aarch64-linux-gnu
+sudo apt-get install -y -qq build-essential gcc-aarch64-linux-gnu
 
-echo "=== Компилирую busybox для ARM64 ==="
+echo "=== Компилирую toybox для ARM64 ==="
 cd "$WORK"
 
-echo "Скачиваю исходники busybox..."
-curl -sS -fL --retry 3 -o busybox.tar.bz2 \
-    "https://busybox.net/downloads/busybox-1.36.1.tar.bz2"
-tar xjf busybox.tar.bz2
-cd busybox-1.36.1
+echo "Скачиваю исходники toybox..."
+curl -sS -fL --retry 3 -o toybox.tar.gz \
+    "https://github.com/landley/toybox/archive/refs/tags/0.8.9.tar.gz"
+tar xzf toybox.tar.gz
+cd toybox-0.8.9
 
-# Создаём базовую конфигурацию с значениями по умолчанию
-echo "Создаю базовую конфигурацию..."
-make defconfig < /dev/null
+# Создаём конфигурацию (все утилиты включены)
+echo "Создаю конфигурацию toybox..."
+make defconfig
 
-# Включаем статическую линковку (ВАЖНО для Android!)
-sed -i 's/# CONFIG_STATIC is not set/CONFIG_STATIC=y/' .config
-
-# Отключаем tc (traffic control), так как в новых ядрах Linux заголовки CBQ удалены, 
-# что вызывает ошибку компиляции networking/tc.c
-sed -i 's/CONFIG_TC=y/# CONFIG_TC is not set/' .config
+# Включаем статическую линковку
+sed -i 's/# CONFIG_TOYBOX_STATIC is not set/CONFIG_TOYBOX_STATIC=y/' .config
 
 # Компилируем
-echo "Компиляция (это займёт 2-5 минут)..."
+echo "Компиляция toybox (это займёт 2-5 минут)..."
 make CROSS_COMPILE=aarch64-linux-gnu- -j$(nproc)
 
-if [ -f "busybox" ]; then
-    cp busybox "$ASSETS_DIR/busybox"
-    chmod 0755 "$ASSETS_DIR/busybox"
-    echo "[OK] busybox скомпилирован (статический)"
+if [ -f "toybox" ]; then
+    cp toybox "$ASSETS_DIR/toybox"
+    chmod 0755 "$ASSETS_DIR/toybox"
+    echo "[OK] toybox скомпилирован (статический)"
 else
-    echo "[ERROR] не удалось скомпилировать busybox"
+    echo "[ERROR] не удалось скомпилировать toybox"
     exit 1
 fi
 
