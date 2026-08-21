@@ -25,13 +25,25 @@ cp "$WORK/proot" "$JNILIB_DIR/libproot.so"
 chmod 0755 "$JNILIB_DIR/libproot.so"
 echo "[OK] proot готов"
 
-# 2. Toybox (статическая компиляция через gcc-aarch64-linux-gnu)
+# 2. Toybox (статическая компиляция)
 echo "=== Устанавливаю кросс-компилятор ==="
 sudo apt-get update -qq
 sudo apt-get install -y -qq build-essential gcc-aarch64-linux-gnu
 
 echo "=== Компилирую toybox (статический) ==="
 cd "$WORK"
+
+# Создаём симлинки в локальной папке и добавляем в PATH
+mkdir -p "$WORK/bin"
+ln -sf /usr/bin/aarch64-linux-gnu-gcc "$WORK/bin/aarch64-linux-gnu-cc"
+ln -sf /usr/bin/aarch64-linux-gnu-g++ "$WORK/bin/aarch64-linux-gnu-c++"
+ln -sf /usr/bin/aarch64-linux-gnu-ld "$WORK/bin/aarch64-linux-gnu-ld"
+ln -sf /usr/bin/aarch64-linux-gnu-ar "$WORK/bin/aarch64-linux-gnu-ar"
+ln -sf /usr/bin/aarch64-linux-gnu-strip "$WORK/bin/aarch64-linux-gnu-strip"
+export PATH="$WORK/bin:$PATH"
+
+echo "Проверка компилятора..."
+aarch64-linux-gnu-cc --version
 
 echo "Скачиваю исходники toybox..."
 curl -sS -fL --retry 3 -o toybox.tar.gz \
@@ -51,16 +63,11 @@ sed -i 's/CONFIG_SU=y/# CONFIG_SU is not set/' .config
 sed -i 's/CONFIG_LOGIN=y/# CONFIG_LOGIN is not set/' .config
 sed -i 's/CONFIG_MKPASSWD=y/# CONFIG_MKPASSWD is not set/' .config
 
-# Компилируем с явным указанием статической линковки
+# Компилируем
 echo "Компиляция toybox (2-5 минут)..."
-make CROSS_COMPILE=aarch64-linux-gnu- \
-     CC="aarch64-linux-gnu-gcc -static" \
-     LDFLAGS="-static" \
-     EXTRA_CFLAGS="-static" \
-     -j$(nproc)
+make CROSS_COMPILE=aarch64-linux-gnu- -j$(nproc)
 
 if [ -f "toybox" ]; then
-    # Проверяем тип бинарника
     echo "Проверка бинарника..."
     file toybox
     
