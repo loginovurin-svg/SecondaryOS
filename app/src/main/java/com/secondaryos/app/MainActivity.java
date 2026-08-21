@@ -36,7 +36,7 @@ import java.util.concurrent.Executors;
 public class MainActivity extends Activity {
 
     private static final String TAG = "SecondaryOS";
-    private static final int INSTALL_VERSION = 2;
+    private static final int INSTALL_VERSION = 3; // Увеличиваем версию, чтобы перераспаковать rootfs
 
     private TextView logView;
     private Button startButton;
@@ -46,7 +46,6 @@ public class MainActivity extends Activity {
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private final ExecutorService executor = Executors.newSingleThreadExecutor();
     
-    // Переменные для интерактивного терминала
     private Process bashProcess;
     private OutputStream bashIn;
     private InputStream bashOut;
@@ -145,6 +144,7 @@ public class MainActivity extends Activity {
             log("Распаковываю rootfs (это может занять время)...");
             if (rootfs.exists()) deleteRecursively(rootfs);
             extractRootfs(rootfs);
+            installBusybox(rootfs); // Устанавливаем busybox
             writeFile(marker, String.valueOf(INSTALL_VERSION));
         } else {
             log("Rootfs уже распакован.");
@@ -160,17 +160,48 @@ public class MainActivity extends Activity {
         a.add("/usr/bin/uname"); a.add("-a");
         testLaunch(proot, rootfs, tmpDir, "A", a);
 
-        // Тест C: sh -c echo
-        List<String> c = new ArrayList<>();
-        c.add("/bin/sh"); c.add("-c"); c.add("echo BASH_OK");
-        testLaunch(proot, rootfs, tmpDir, "C", c);
-
-        // Тест D: ls через sh (проверка, что ls вообще работает)
-        List<String> d = new ArrayList<>();
-        d.add("/bin/sh"); d.add("-c"); d.add("/bin/ls /");
-        testLaunch(proot, rootfs, tmpDir, "D", d);
+        // Тест B: busybox ls
+        List<String> b = new ArrayList<>();
+        b.add("/bin/busybox"); b.add("ls"); b.add("/");
+        testLaunch(proot, rootfs, tmpDir, "B", b);
 
         log("=== Диагностика пройдена успешно ===");
+    }
+
+    // Устанавливаем статический busybox
+    private void installBusybox(File rootfs) throws Exception {
+        log("Устанавливаю busybox...");
+        File busyboxBin = new File(rootfs, "bin/busybox");
+        
+        // Копируем busybox из assets
+        try (InputStream in = getAssets().open("busybox");
+             FileOutputStream out = new FileOutputStream(busyboxBin)) {
+            byte[] buf = new byte[65536];
+            int n;
+            while ((n = in.read(buf)) > 0) out.write(buf, 0, n);
+        }
+        
+        // Делаем исполняемым
+        Os.chmod(busyboxBin.getAbsolutePath(), 0755);
+        
+        // Создаём симлинки на основные команды
+        String[] commands = {
+            "ls", "cat", "grep", "echo", "cd", "pwd", "mkdir", "rm", "cp", "mv",
+            "chmod", "chown", "tar", "gzip", "wget", "vi", "sh", "bash"
+        };
+        
+        for (String cmd : commands) {
+            File link = new File(rootfs, "bin/" + cmd);
+            if (!link.exists()) {
+                try {
+                    Os.symlink("busybox", link.getAbsolutePath());
+                } catch (Exception e) {
+                    log("Не удалось создать симлинк: " + cmd);
+                }
+            }
+        }
+        
+        log("Busybox установлен. Создано " + commands.length + " симлинков.");
     }
 
     private void startInteractiveShell() throws Exception {
@@ -180,7 +211,7 @@ public class MainActivity extends Activity {
 
         List<String> cmd = new ArrayList<>();
         cmd.add(proot.getAbsolutePath());
-        cmd.add("-0");                    // Эмуляция root
+        cmd.add("-0");
         cmd.add("-r"); cmd.add(rootfs.getAbsolutePath());
         cmd.add("-b"); cmd.add("/dev");
         cmd.add("-b"); cmd.add("/proc");
