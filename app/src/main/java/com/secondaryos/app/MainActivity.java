@@ -123,7 +123,7 @@ public class MainActivity extends Activity {
                 runDiagnostics();
                 startInteractiveShell();
             } catch (Throwable t) {
-                log(" КРИТИЧЕСКАЯ ОШИБКА: " + t.getMessage());
+                log("✗ КРИТИЧЕСКАЯ ОШИБКА: " + t.getMessage());
                 Log.e(TAG, "fatal", t);
             } finally {
                 mainHandler.post(() -> {
@@ -159,7 +159,7 @@ public class MainActivity extends Activity {
         File tmpDir = new File(getFilesDir(), "tmp");
         tmpDir.mkdirs();
 
-        // Тесты без флага -L
+        // Тесты с отключенным seccomp (-S NONE)
         List<String> a = new ArrayList<>();
         a.add("/usr/bin/uname"); a.add("-a");
         testLaunch(proot, rootfs, tmpDir, "A", a);
@@ -176,10 +176,11 @@ public class MainActivity extends Activity {
         File rootfs = new File(getFilesDir(), "debian");
         File tmpDir = new File(getFilesDir(), "tmp");
 
-        // Формируем команду proot БЕЗ флага -L (он не поддерживается)
+        // Формируем команду proot с ОТКЛЮЧЕННЫМ seccomp
         List<String> cmd = new ArrayList<>();
         cmd.add(proot.getAbsolutePath());
-        cmd.add("-0");                    // Эмуляция root (обязательно!)
+        cmd.add("-0");                    // Эмуляция root
+        cmd.add("-S"); cmd.add("NONE");   // ВАЖНО! Отключаем seccomp-ускорение (обход SIGSYS на Android 16)
         cmd.add("-r"); cmd.add(rootfs.getAbsolutePath());
         cmd.add("-b"); cmd.add("/dev");
         cmd.add("-b"); cmd.add("/proc");
@@ -187,9 +188,7 @@ public class MainActivity extends Activity {
         cmd.add("-b"); cmd.add(tmpDir.getAbsolutePath() + ":/tmp");
         cmd.add("-b"); cmd.add(getFilesDir().getAbsolutePath() + ":/host");
         cmd.add("-w"); cmd.add("/root");
-        // Добавляем флаги для обхода seccomp на Android 16
-        cmd.add("--link2symlink");       // Преобразует hardlink в symlink
-        cmd.add("-v"); cmd.add("1");     // Минимальный verbose для отладки
+        cmd.add("--link2symlink");       // Преобразует hardlink в symlink (безопаснее)
         cmd.add("/bin/sh");              // Используем sh вместо bash
 
         ProcessBuilder pb = new ProcessBuilder(cmd);
@@ -206,6 +205,7 @@ public class MainActivity extends Activity {
         bashOut = bashProcess.getInputStream();
 
         log("--- Терминал запущен. Введите команду. ---");
+        log("--- Seccomp отключен (-S NONE) ---");
 
         // Читаем вывод из bash в фоновом потоке
         new Thread(() -> {
@@ -256,7 +256,8 @@ public class MainActivity extends Activity {
     private void testLaunch(File proot, File rootfs, File tmpDir, String tag, List<String> guestCmd) throws Exception {
         List<String> cmd = new ArrayList<>();
         cmd.add(proot.getAbsolutePath());
-        cmd.add("-0");   // Эмуляция root
+        cmd.add("-0");          // Эмуляция root
+        cmd.add("-S"); cmd.add("NONE"); // ВАЖНО! Отключаем seccomp
         cmd.add("-r"); cmd.add(rootfs.getAbsolutePath());
         cmd.add("-b"); cmd.add("/dev");
         cmd.add("-b"); cmd.add("/proc");
