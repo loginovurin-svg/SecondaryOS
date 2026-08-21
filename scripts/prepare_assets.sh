@@ -4,8 +4,7 @@ set -euo pipefail
 # ============================================================
 # SecondaryOS
 # scripts/prepare_assets.sh — ВАРИАНТ B (рабочий)
-# Готовый статический proot 5.3.0 + Debian 11 (bullseye).
-# Сборки termux-proot признаны тупиком на Android 16.
+# Готовый статический proot 5.3.0 + Debian 11 (bullseye) + busybox
 # ============================================================
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -19,7 +18,7 @@ echo "=== SecondaryOS prepare_assets (вариант B) ==="
 
 mkdir -p "$ASSETS_DIR" "$JNILIB_DIR"
 rm -f "$ASSETS_DIR/proot_static" "$JNILIB_DIR/libproot.so" \
-      "$ASSETS_DIR/debian-rootfs.tar.xz"
+      "$ASSETS_DIR/debian-rootfs.tar.xz" "$ASSETS_DIR/busybox"
 
 # ------------------------------------------------------------
 # 1. Готовый статический proot 5.3.0
@@ -37,7 +36,19 @@ chmod 0755 "$JNILIB_DIR/libproot.so"
 echo "proot готов"
 
 # ------------------------------------------------------------
-# 2. Rootfs Debian 11 (bullseye)
+# 2. Статический busybox для ARM64 (Android)
+# ------------------------------------------------------------
+echo "=== Скачиваю busybox ==="
+curl -sS -fL --retry 3 -o "$WORK/busybox" \
+    "https://busybox.net/downloads/binaries/1.35.0-aarch64-linux-android-musl/busybox"
+
+chmod 0755 "$WORK/busybox"
+cp "$WORK/busybox" "$ASSETS_DIR/busybox"
+chmod 0755 "$ASSETS_DIR/busybox"
+echo "busybox готов"
+
+# ------------------------------------------------------------
+# 3. Rootfs Debian 11 (bullseye)
 # ------------------------------------------------------------
 echo "=== Скачиваю Debian 11 rootfs ==="
 ROOTFS_BASE_URL="https://images.linuxcontainers.org/images/debian/bullseye/arm64/default"
