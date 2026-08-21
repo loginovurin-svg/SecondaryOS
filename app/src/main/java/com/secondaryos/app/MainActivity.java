@@ -159,13 +159,13 @@ public class MainActivity extends Activity {
         File tmpDir = new File(getFilesDir(), "tmp");
         tmpDir.mkdirs();
 
-        // Быстрые тесты жизнеспособности
+        // Быстрые тесты жизнеспособности с флагом -L
         List<String> a = new ArrayList<>();
         a.add("/usr/bin/uname"); a.add("-a");
         testLaunch(proot, rootfs, tmpDir, "A", a);
 
         List<String> c = new ArrayList<>();
-        c.add("/bin/bash"); c.add("-c"); c.add("echo BASH_OK");
+        c.add("/bin/sh"); c.add("-c"); c.add("echo BASH_OK");
         testLaunch(proot, rootfs, tmpDir, "C", c);
 
         log("=== Диагностика пройдена успешно ===");
@@ -176,9 +176,11 @@ public class MainActivity extends Activity {
         File rootfs = new File(getFilesDir(), "debian");
         File tmpDir = new File(getFilesDir(), "tmp");
 
+        // Формируем команду proot с критически важными флагами
         List<String> cmd = new ArrayList<>();
         cmd.add(proot.getAbsolutePath());
-        cmd.add("-0");  // Эмуляция root (ВАЖНО для Android 16!)
+        cmd.add("-0");                    // Эмуляция root (обязательно!)
+        cmd.add("-L");                    // Эмуляция ld.so — ОБХОДИТ seccomp на Android 16!
         cmd.add("-r"); cmd.add(rootfs.getAbsolutePath());
         cmd.add("-b"); cmd.add("/dev");
         cmd.add("-b"); cmd.add("/proc");
@@ -186,9 +188,7 @@ public class MainActivity extends Activity {
         cmd.add("-b"); cmd.add(tmpDir.getAbsolutePath() + ":/tmp");
         cmd.add("-b"); cmd.add(getFilesDir().getAbsolutePath() + ":/host"); // Для Фазы 2
         cmd.add("-w"); cmd.add("/root");  // Рабочая директория
-        cmd.add("/bin/bash");
-        cmd.add("--norc");
-        cmd.add("--noprofile");
+        cmd.add("/bin/sh");               // Используем sh вместо bash (меньше системных вызовов)
 
         ProcessBuilder pb = new ProcessBuilder(cmd);
         pb.directory(rootfs);
@@ -196,7 +196,7 @@ public class MainActivity extends Activity {
         pb.environment().put("HOME", "/root");
         pb.environment().put("TERM", "xterm-256color");
         pb.environment().put("PS1", "\\u@debian:\\w$ ");
-        pb.environment().put("PATH", "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin");  // ВАЖНО!
+        pb.environment().put("PATH", "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin");
         pb.environment().put("PROOT_TMP_DIR", tmpDir.getAbsolutePath());
 
         bashProcess = pb.start();
@@ -204,9 +204,11 @@ public class MainActivity extends Activity {
         bashOut = bashProcess.getInputStream();
 
         log("--- Терминал запущен. Введите команду. ---");
+        log("--- Флаг -L активен (обход seccomp) ---");
 
+        // Читаем вывод из bash в фоновом потоке
         new Thread(() -> {
-            byte[] buffer = new byte[1024];
+            byte[] buffer = new byte[2048];  // Увеличенный буфер
             int len;
             try {
                 while ((len = bashOut.read(buffer)) != -1) {
@@ -253,7 +255,8 @@ public class MainActivity extends Activity {
     private void testLaunch(File proot, File rootfs, File tmpDir, String tag, List<String> guestCmd) throws Exception {
         List<String> cmd = new ArrayList<>();
         cmd.add(proot.getAbsolutePath());
-        cmd.add("-0");  // Эмуляция root
+        cmd.add("-0");   // Эмуляция root
+        cmd.add("-L");   // Эмуляция ld.so — критично для Android 16!
         cmd.add("-r"); cmd.add(rootfs.getAbsolutePath());
         cmd.add("-b"); cmd.add("/dev");
         cmd.add("-b"); cmd.add("/proc");
