@@ -35,12 +35,12 @@ echo "[OK] proot готов"
 # ------------------------------------------------------------
 # 2. Busybox (компиляция из исходников)
 # ------------------------------------------------------------
+echo "=== Устанавливаю кросс-компилятор ==="
+sudo apt-get update -qq
+sudo apt-get install -y -qq build-essential bzip2 gcc-aarch64-linux-gnu
+
 echo "=== Компилирую busybox для ARM64 ==="
 cd "$WORK"
-
-# Устанавливаем зависимости (если нужно)
-apt-get update -qq || true
-apt-get install -y -qq build-essential bzip2 || true
 
 # Скачиваем исходники busybox
 echo "Скачиваю исходники busybox..."
@@ -49,15 +49,21 @@ curl -sS -fL --retry 3 -o busybox.tar.bz2 \
 tar xjf busybox.tar.bz2
 cd busybox-1.36.1
 
-# Настраиваем и компилируем
-echo "Компиляция (это займёт время)..."
-make defconfig
-make CROSS_COMPILE=aarch64-linux-gnu- -j$(nproc)
+# Настраиваем конфигурацию (автоматически принимаем значения по умолчанию)
+echo "Настраиваю конфигурацию..."
+yes "" | make defconfig > /dev/null 2>&1
+
+# Включаем статическую линковку (ВАЖНО для Android!)
+sed -i 's/# CONFIG_STATIC is not set/CONFIG_STATIC=y/' .config
+
+# Компилируем
+echo "Компиляция (это займёт 2-5 минут)..."
+make CROSS_COMPILE=aarch64-linux-gnu- -j$(nproc) > /dev/null 2>&1
 
 if [ -f "busybox" ]; then
     cp busybox "$ASSETS_DIR/busybox"
     chmod 0755 "$ASSETS_DIR/busybox"
-    echo "[OK] busybox скомпилирован"
+    echo "[OK] busybox скомпилирован (статический)"
 else
     echo "[ERROR] не удалось скомпилировать busybox"
     exit 1
