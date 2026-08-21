@@ -46,16 +46,22 @@ curl -sS -fL --retry 3 -o toybox.tar.gz \
 tar xzf toybox.tar.gz
 cd toybox-0.8.9
 
-# Создаём конфигурацию (все утилиты включены)
+# Создаём конфигурацию
 echo "Создаю конфигурацию toybox..."
 make defconfig
 
 # Включаем статическую линковку
 sed -i 's/# CONFIG_TOYBOX_STATIC is not set/CONFIG_TOYBOX_STATIC=y/' .config
 
-# Компилируем
+# Отключаем утилиты, требующие libcrypt (избегаем ошибки линковки)
+sed -i 's/CONFIG_PASSWD=y/# CONFIG_PASSWD is not set/' .config
+sed -i 's/CONFIG_SU=y/# CONFIG_SU is not set/' .config
+sed -i 's/CONFIG_LOGIN=y/# CONFIG_LOGIN is not set/' .config
+sed -i 's/CONFIG_MKPASSWD=y/# CONFIG_MKPASSWD is not set/' .config
+
+# Компилируем с игнорированием предупреждений как ошибок
 echo "Компиляция toybox (это займёт 2-5 минут)..."
-make CROSS_COMPILE=aarch64-linux-gnu- -j$(nproc)
+make CROSS_COMPILE=aarch64-linux-gnu- EXTRA_CFLAGS="-Wno-error" -j$(nproc)
 
 if [ -f "toybox" ]; then
     cp toybox "$ASSETS_DIR/toybox"
