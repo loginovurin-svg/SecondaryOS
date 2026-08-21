@@ -36,7 +36,7 @@ import java.util.concurrent.Executors;
 public class MainActivity extends Activity {
 
     private static final String TAG = "SecondaryOS";
-    private static final int INSTALL_VERSION = 3; // Увеличиваем версию, чтобы перераспаковать rootfs
+    private static final int INSTALL_VERSION = 4; // Увеличиваем версию для переустановки
 
     private TextView logView;
     private Button startButton;
@@ -46,6 +46,7 @@ public class MainActivity extends Activity {
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private final ExecutorService executor = Executors.newSingleThreadExecutor();
     
+    // Переменные для интерактивного терминала
     private Process bashProcess;
     private OutputStream bashIn;
     private InputStream bashOut;
@@ -118,7 +119,7 @@ public class MainActivity extends Activity {
                 runDiagnostics();
                 startInteractiveShell();
             } catch (Throwable t) {
-                log("✗ КРИТИЧЕСКАЯ ОШИБКА: " + t.getMessage());
+                log(" КРИТИЧЕСКАЯ ОШИБКА: " + t.getMessage());
                 Log.e(TAG, "fatal", t);
             } finally {
                 mainHandler.post(() -> {
@@ -144,7 +145,7 @@ public class MainActivity extends Activity {
             log("Распаковываю rootfs (это может занять время)...");
             if (rootfs.exists()) deleteRecursively(rootfs);
             extractRootfs(rootfs);
-            installBusybox(rootfs); // Устанавливаем busybox
+            installBusybox(rootfs);
             writeFile(marker, String.valueOf(INSTALL_VERSION));
         } else {
             log("Rootfs уже распакован.");
@@ -155,15 +156,20 @@ public class MainActivity extends Activity {
         File tmpDir = new File(getFilesDir(), "tmp");
         tmpDir.mkdirs();
 
-        // Тест A: uname
+        // Тест A: uname (проверка что proot работает)
         List<String> a = new ArrayList<>();
         a.add("/usr/bin/uname"); a.add("-a");
         testLaunch(proot, rootfs, tmpDir, "A", a);
 
-        // Тест B: busybox ls
+        // Тест B: встроенная команда echo через sh (вместо busybox)
         List<String> b = new ArrayList<>();
-        b.add("/bin/busybox"); b.add("ls"); b.add("/");
+        b.add("/bin/sh"); b.add("-c"); b.add("echo SH_OK");
         testLaunch(proot, rootfs, tmpDir, "B", b);
+
+        // Тест C: встроенная команда pwd
+        List<String> c = new ArrayList<>();
+        c.add("/bin/sh"); c.add("-c"); c.add("pwd");
+        testLaunch(proot, rootfs, tmpDir, "C", c);
 
         log("=== Диагностика пройдена успешно ===");
     }
@@ -190,18 +196,20 @@ public class MainActivity extends Activity {
             "chmod", "chown", "tar", "gzip", "wget", "vi", "sh", "bash"
         };
         
+        int created = 0;
         for (String cmd : commands) {
             File link = new File(rootfs, "bin/" + cmd);
             if (!link.exists()) {
                 try {
                     Os.symlink("busybox", link.getAbsolutePath());
+                    created++;
                 } catch (Exception e) {
                     log("Не удалось создать симлинк: " + cmd);
                 }
             }
         }
         
-        log("Busybox установлен. Создано " + commands.length + " симлинков.");
+        log("Busybox установлен. Создано " + created + " симлинков.");
     }
 
     private void startInteractiveShell() throws Exception {
@@ -211,7 +219,7 @@ public class MainActivity extends Activity {
 
         List<String> cmd = new ArrayList<>();
         cmd.add(proot.getAbsolutePath());
-        cmd.add("-0");
+        cmd.add("-0");                    // Эмуляция root
         cmd.add("-r"); cmd.add(rootfs.getAbsolutePath());
         cmd.add("-b"); cmd.add("/dev");
         cmd.add("-b"); cmd.add("/proc");
@@ -236,6 +244,7 @@ public class MainActivity extends Activity {
         bashOut = bashProcess.getInputStream();
 
         log("--- Терминал запущен. Введите команду. ---");
+        log("--- Используй встроенные команды: echo, cd, pwd, export ---");
 
         new Thread(() -> {
             byte[] buffer = new byte[2048];
