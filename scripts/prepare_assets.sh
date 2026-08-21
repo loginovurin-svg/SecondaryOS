@@ -12,7 +12,7 @@ echo "=== SecondaryOS prepare_assets ==="
 
 mkdir -p "$ASSETS_DIR" "$JNILIB_DIR"
 rm -f "$ASSETS_DIR/proot_static" "$JNILIB_DIR/libproot.so" \
-      "$ASSETS_DIR/debian-rootfs.tar.xz" "$ASSETS_DIR/toybox"
+      "$ASSETS_DIR/debian-rootfs.tar.xz" "$ASSETS_DIR/busybox"
 
 # 1. Proot
 echo "=== Скачиваю proot ==="
@@ -25,57 +25,17 @@ cp "$WORK/proot" "$JNILIB_DIR/libproot.so"
 chmod 0755 "$JNILIB_DIR/libproot.so"
 echo "[OK] proot готов"
 
-# 2. Toybox (статическая компиляция)
-echo "=== Устанавливаю кросс-компилятор ==="
-sudo apt-get update -qq
-sudo apt-get install -y -qq build-essential gcc-aarch64-linux-gnu
+# 2. Busybox для Android (статический, musl libc)
+echo "=== Скачиваю busybox для Android ARM64 ==="
+curl -sS -fL --retry 3 -o "$ASSETS_DIR/busybox" \
+    "https://busybox.net/downloads/binaries/1.35.0-aarch64-linux-android-musl/busybox"
 
-echo "=== Компилирую toybox (статический) ==="
-cd "$WORK"
-
-# Создаём симлинки в локальной папке и добавляем в PATH
-mkdir -p "$WORK/bin"
-ln -sf /usr/bin/aarch64-linux-gnu-gcc "$WORK/bin/aarch64-linux-gnu-cc"
-ln -sf /usr/bin/aarch64-linux-gnu-g++ "$WORK/bin/aarch64-linux-gnu-c++"
-ln -sf /usr/bin/aarch64-linux-gnu-ld "$WORK/bin/aarch64-linux-gnu-ld"
-ln -sf /usr/bin/aarch64-linux-gnu-ar "$WORK/bin/aarch64-linux-gnu-ar"
-ln -sf /usr/bin/aarch64-linux-gnu-strip "$WORK/bin/aarch64-linux-gnu-strip"
-export PATH="$WORK/bin:$PATH"
-
-echo "Проверка компилятора..."
-aarch64-linux-gnu-cc --version
-
-echo "Скачиваю исходники toybox..."
-curl -sS -fL --retry 3 -o toybox.tar.gz \
-    "https://github.com/landley/toybox/archive/refs/tags/0.8.9.tar.gz"
-tar xzf toybox.tar.gz
-cd toybox-0.8.9
-
-echo "Создаю конфигурацию toybox..."
-make defconfig
-
-# Включаем статическую линковку
-sed -i 's/# CONFIG_TOYBOX_STATIC is not set/CONFIG_TOYBOX_STATIC=y/' .config
-
-# Отключаем утилиты, требующие libcrypt
-sed -i 's/CONFIG_PASSWD=y/# CONFIG_PASSWD is not set/' .config
-sed -i 's/CONFIG_SU=y/# CONFIG_SU is not set/' .config
-sed -i 's/CONFIG_LOGIN=y/# CONFIG_LOGIN is not set/' .config
-sed -i 's/CONFIG_MKPASSWD=y/# CONFIG_MKPASSWD is not set/' .config
-
-# Компилируем
-echo "Компиляция toybox (2-5 минут)..."
-make CROSS_COMPILE=aarch64-linux-gnu- -j$(nproc)
-
-if [ -f "toybox" ]; then
-    echo "Проверка бинарника..."
-    file toybox
-    
-    cp toybox "$ASSETS_DIR/toybox"
-    chmod 0755 "$ASSETS_DIR/toybox"
-    echo "[OK] toybox скомпилирован"
+if [ -f "$ASSETS_DIR/busybox" ] && [ -s "$ASSETS_DIR/busybox" ]; then
+    chmod 0755 "$ASSETS_DIR/busybox"
+    echo "[OK] busybox скачан"
+    file "$ASSETS_DIR/busybox"
 else
-    echo "[ERROR] не удалось скомпилировать toybox"
+    echo "[ERROR] не удалось скачать busybox"
     exit 1
 fi
 
