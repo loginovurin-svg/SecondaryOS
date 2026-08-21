@@ -49,12 +49,32 @@ curl -sS -fL --retry 3 -o busybox.tar.bz2 \
 tar xjf busybox.tar.bz2
 cd busybox-1.36.1
 
-# Настраиваем конфигурацию (olddefconfig автоматически принимает значения по умолчанию)
+# Создаём конфигурацию (defconfig с автоматическим принятием значений)
 echo "Настраиваю конфигурацию..."
-make olddefconfig > /dev/null 2>&1 || true
+make defconfig < /dev/null || make allnoconfig
+
+# Если .config всё ещё не создан, создаём минимальный вручную
+if [ ! -f .config ]; then
+    echo "Создаю .config вручную..."
+    make allnoconfig
+fi
 
 # Включаем статическую линковку (ВАЖНО для Android!)
 sed -i 's/# CONFIG_STATIC is not set/CONFIG_STATIC=y/' .config
+
+# Включаем базовые утилиты
+sed -i 's/# CONFIG_LS is not set/CONFIG_LS=y/' .config
+sed -i 's/# CONFIG_CAT is not set/CONFIG_CAT=y/' .config
+sed -i 's/# CONFIG_ECHO is not set/CONFIG_ECHO=y/' .config
+sed -i 's/# CONFIG_PWD is not set/CONFIG_PWD=y/' .config
+sed -i 's/# CONFIG_MKDIR is not set/CONFIG_MKDIR=y/' .config
+sed -i 's/# CONFIG_RM is not set/CONFIG_RM=y/' .config
+sed -i 's/# CONFIG_CP is not set/CONFIG_CP=y/' .config
+sed -i 's/# CONFIG_MV is not set/CONFIG_MV=y/' .config
+sed -i 's/# CONFIG_SH_IS_ASH is not set/CONFIG_SH_IS_ASH=y/' .config
+
+# Обновляем конфигурацию
+make olddefconfig < /dev/null || true
 
 # Компилируем
 echo "Компиляция (это займёт 2-5 минут)..."
