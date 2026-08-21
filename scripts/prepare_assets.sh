@@ -49,9 +49,9 @@ curl -sS -fL --retry 3 -o busybox.tar.bz2 \
 tar xjf busybox.tar.bz2
 cd busybox-1.36.1
 
-# Настраиваем конфигурацию (автоматически принимаем значения по умолчанию)
+# Настраиваем конфигурацию (olddefconfig автоматически принимает значения по умолчанию)
 echo "Настраиваю конфигурацию..."
-yes "" | make defconfig > /dev/null 2>&1
+make olddefconfig > /dev/null 2>&1 || true
 
 # Включаем статическую линковку (ВАЖНО для Android!)
 sed -i 's/# CONFIG_STATIC is not set/CONFIG_STATIC=y/' .config
