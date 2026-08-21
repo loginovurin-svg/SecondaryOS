@@ -46,6 +46,10 @@ make defconfig < /dev/null
 # Включаем статическую линковку (ВАЖНО для Android!)
 sed -i 's/# CONFIG_STATIC is not set/CONFIG_STATIC=y/' .config
 
+# Отключаем tc (traffic control), так как в новых ядрах Linux заголовки CBQ удалены, 
+# что вызывает ошибку компиляции networking/tc.c
+sed -i 's/CONFIG_TC=y/# CONFIG_TC is not set/' .config
+
 # Компилируем
 echo "Компиляция (это займёт 2-5 минут)..."
 make CROSS_COMPILE=aarch64-linux-gnu- -j$(nproc)
