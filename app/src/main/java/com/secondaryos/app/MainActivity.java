@@ -36,7 +36,7 @@ import java.util.concurrent.Executors;
 public class MainActivity extends Activity {
 
     private static final String TAG = "SecondaryOS";
-    private static final int INSTALL_VERSION = 4; // Увеличиваем версию для переустановки
+    private static final int INSTALL_VERSION = 5; // ВАЖНО: 5, чтобы переустановить всё
 
     private TextView logView;
     private Button startButton;
@@ -46,7 +46,6 @@ public class MainActivity extends Activity {
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private final ExecutorService executor = Executors.newSingleThreadExecutor();
     
-    // Переменные для интерактивного терминала
     private Process bashProcess;
     private OutputStream bashIn;
     private InputStream bashOut;
@@ -94,7 +93,7 @@ public class MainActivity extends Activity {
         });
 
         sendButton = new Button(this);
-        sendButton.setText("➔");
+        sendButton.setText("");
         sendButton.setEnabled(false);
         sendButton.setOnClickListener(v -> sendCommand());
 
@@ -119,7 +118,7 @@ public class MainActivity extends Activity {
                 runDiagnostics();
                 startInteractiveShell();
             } catch (Throwable t) {
-                log(" КРИТИЧЕСКАЯ ОШИБКА: " + t.getMessage());
+                log("✗ КРИТИЧЕСКАЯ ОШИБКА: " + t.getMessage());
                 Log.e(TAG, "fatal", t);
             } finally {
                 mainHandler.post(() -> {
@@ -142,10 +141,10 @@ public class MainActivity extends Activity {
         String markerText = marker.exists() ? readFile(marker) : "";
 
         if (!markerText.equals(String.valueOf(INSTALL_VERSION)) || !rootfs.exists()) {
-            log("Распаковываю rootfs (это может занять время)...");
+            log("Распаковываю rootfs...");
             if (rootfs.exists()) deleteRecursively(rootfs);
             extractRootfs(rootfs);
-            installBusybox(rootfs);
+            installToybox(rootfs); // <-- ВАЖНО: installToybox, НЕ installBusybox!
             writeFile(marker, String.valueOf(INSTALL_VERSION));
         } else {
             log("Rootfs уже распакован.");
@@ -156,44 +155,38 @@ public class MainActivity extends Activity {
         File tmpDir = new File(getFilesDir(), "tmp");
         tmpDir.mkdirs();
 
-        // Тест A: uname (проверка что proot работает)
         List<String> a = new ArrayList<>();
         a.add("/usr/bin/uname"); a.add("-a");
         testLaunch(proot, rootfs, tmpDir, "A", a);
 
-        // Тест B: встроенная команда echo через sh (вместо busybox)
         List<String> b = new ArrayList<>();
         b.add("/bin/sh"); b.add("-c"); b.add("echo SH_OK");
         testLaunch(proot, rootfs, tmpDir, "B", b);
 
-        // Тест C: встроенная команда pwd
         List<String> c = new ArrayList<>();
         c.add("/bin/sh"); c.add("-c"); c.add("pwd");
         testLaunch(proot, rootfs, tmpDir, "C", c);
 
-        log("=== Диагностика пройдена успешно ===");
+        log("=== Диагностика пройдена ===");
     }
 
-    // Устанавливаем статический busybox
-    private void installBusybox(File rootfs) throws Exception {
-        log("Устанавливаю busybox...");
-        File busyboxBin = new File(rootfs, "bin/busybox");
+    // ВАЖНО: метод называется installToybox, читает "toybox" из assets
+    private void installToybox(File rootfs) throws Exception {
+        log("Устанавливаю toybox...");
+        File toyboxBin = new File(rootfs, "bin/toybox");
         
-        // Копируем busybox из assets
-        try (InputStream in = getAssets().open("busybox");
-             FileOutputStream out = new FileOutputStream(busyboxBin)) {
+        try (InputStream in = getAssets().open("toybox");
+             FileOutputStream out = new FileOutputStream(toyboxBin)) {
             byte[] buf = new byte[65536];
             int n;
             while ((n = in.read(buf)) > 0) out.write(buf, 0, n);
         }
         
-        // Делаем исполняемым
-        Os.chmod(busyboxBin.getAbsolutePath(), 0755);
+        Os.chmod(toyboxBin.getAbsolutePath(), 0755);
         
-        // Создаём симлинки на основные команды
         String[] commands = {
             "ls", "cat", "grep", "echo", "cd", "pwd", "mkdir", "rm", "cp", "mv",
-            "chmod", "chown", "tar", "gzip", "wget", "vi", "sh", "bash"
+            "chmod", "chown", "tar", "gzip", "wget", "vi", "sh", "ps", "top"
         };
         
         int created = 0;
@@ -201,7 +194,7 @@ public class MainActivity extends Activity {
             File link = new File(rootfs, "bin/" + cmd);
             if (!link.exists()) {
                 try {
-                    Os.symlink("busybox", link.getAbsolutePath());
+                    Os.symlink("toybox", link.getAbsolutePath());
                     created++;
                 } catch (Exception e) {
                     log("Не удалось создать симлинк: " + cmd);
@@ -209,7 +202,7 @@ public class MainActivity extends Activity {
             }
         }
         
-        log("Busybox установлен. Создано " + created + " симлинков.");
+        log("Toybox установлен. Создано " + created + " симлинков.");
     }
 
     private void startInteractiveShell() throws Exception {
@@ -219,7 +212,7 @@ public class MainActivity extends Activity {
 
         List<String> cmd = new ArrayList<>();
         cmd.add(proot.getAbsolutePath());
-        cmd.add("-0");                    // Эмуляция root
+        cmd.add("-0");
         cmd.add("-r"); cmd.add(rootfs.getAbsolutePath());
         cmd.add("-b"); cmd.add("/dev");
         cmd.add("-b"); cmd.add("/proc");
@@ -243,8 +236,7 @@ public class MainActivity extends Activity {
         bashIn = bashProcess.getOutputStream();
         bashOut = bashProcess.getInputStream();
 
-        log("--- Терминал запущен. Введите команду. ---");
-        log("--- Используй встроенные команды: echo, cd, pwd, export ---");
+        log("--- Терминал запущен. Попробуй: toybox ls / ---");
 
         new Thread(() -> {
             byte[] buffer = new byte[2048];
@@ -318,7 +310,7 @@ public class MainActivity extends Activity {
         }
         int code = p.waitFor();
         if (code != 0) {
-            throw new Exception("Тест " + tag + " завершился с кодом " + code);
+            throw new Exception("Тест " + tag + " код: " + code);
         }
     }
 
@@ -387,10 +379,10 @@ public class MainActivity extends Activity {
                     safeChmod(out, entry.getMode() & 07777, false);
                 }
                 count++;
-                if (count % 2000 == 0) log("Распаковано записей: " + count);
+                if (count % 2000 == 0) log("Распаковано: " + count);
             }
         }
-        log("Всего записей в rootfs: " + count);
+        log("Всего записей: " + count);
     }
 
     private void copyFile(File src, File dst) throws Exception {
@@ -428,7 +420,7 @@ public class MainActivity extends Activity {
         try (FileOutputStream fos = new FileOutputStream(f)) {
             fos.write(text.getBytes());
         } catch (Throwable t) {
-            log("Не удалось записать файл: " + t.getMessage());
+            log("Не удалось записать: " + t.getMessage());
         }
     }
     
