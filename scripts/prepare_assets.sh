@@ -33,8 +33,8 @@ sudo apt-get install -y -qq build-essential gcc-aarch64-linux-gnu
 echo "=== Компилирую toybox с musl для ARM64 ==="
 cd "$WORK"
 
-# Скачиваем musl libc для ARM64
-echo "Скачиваю musl libc для ARM64..."
+# Скачиваем musl libc
+echo "Скачиваю musl libc..."
 curl -sS -fL --retry 3 -o musl.tar.gz \
     "https://musl.libc.org/releases/musl-1.2.4.tar.gz"
 tar xzf musl.tar.gz
@@ -46,18 +46,7 @@ echo "Компилирую musl..."
 make -j$(nproc)
 sudo make install
 
-# Создаём симлинки в /usr/local/bin (в PATH)
-echo "Создаю симлинки для musl-компилятора..."
-sudo ln -sf /opt/musl-aarch64/bin/aarch64-linux-gnu-gcc /usr/local/bin/aarch64-linux-gnu-cc
-sudo ln -sf /opt/musl-aarch64/bin/aarch64-linux-gnu-g++ /usr/local/bin/aarch64-linux-gnu-c++
-sudo ln -sf /opt/musl-aarch64/bin/aarch64-linux-gnu-ld /usr/local/bin/aarch64-linux-gnu-ld
-sudo ln -sf /opt/musl-aarch64/bin/aarch64-linux-gnu-ar /usr/local/bin/aarch64-linux-gnu-ar
-sudo ln -sf /opt/musl-aarch64/bin/aarch64-linux-gnu-strip /usr/local/bin/aarch64-linux-gnu-strip
-
-# Проверяем, что симлинки работают
-echo "Проверяю компилятор..."
-aarch64-linux-gnu-cc --version || echo "ОШИБКА: компилятор не найден!"
-
+# Возвращаемся в рабочую папку
 cd "$WORK"
 
 echo "Скачиваю исходники toybox..."
@@ -69,7 +58,7 @@ cd toybox-0.8.9
 echo "Создаю конфигурацию toybox..."
 make defconfig
 
-# Статическая линковка с musl
+# Статическая линковка
 sed -i 's/# CONFIG_TOYBOX_STATIC is not set/CONFIG_TOYBOX_STATIC=y/' .config
 
 # Отключаем утилиты, требующие libcrypt
@@ -78,8 +67,13 @@ sed -i 's/CONFIG_SU=y/# CONFIG_SU is not set/' .config
 sed -i 's/CONFIG_LOGIN=y/# CONFIG_LOGIN is not set/' .config
 sed -i 's/CONFIG_MKPASSWD=y/# CONFIG_MKPASSWD is not set/' .config
 
+# Компилируем toybox с musl-gcc напрямую
 echo "Компиляция toybox с musl (2-5 минут)..."
-make CROSS_COMPILE=aarch64-linux-gnu- EXTRA_CFLAGS="-static -Wno-error" -j$(nproc)
+export CC="/opt/musl-aarch64/bin/musl-gcc"
+export CFLAGS="-static -I/opt/musl-aarch64/include"
+export LDFLAGS="-L/opt/musl-aarch64/lib"
+
+make -j$(nproc)
 
 if [ -f "toybox" ]; then
     # Проверяем, что бинарник статический
