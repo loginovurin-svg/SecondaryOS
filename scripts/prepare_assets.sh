@@ -25,10 +25,10 @@ cp "$WORK/proot" "$JNILIB_DIR/libproot.so"
 chmod 0755 "$JNILIB_DIR/libproot.so"
 echo "[OK] proot готов"
 
-# 2. Toybox с musl libc (полностью статический)
+# 2. Toybox с musl libc
 echo "=== Устанавливаю кросс-компилятор и musl ==="
 sudo apt-get update -qq
-sudo apt-get install -y -qq build-essential gcc-aarch64-linux-gnu musl-tools
+sudo apt-get install -y -qq build-essential gcc-aarch64-linux-gnu
 
 echo "=== Компилирую toybox с musl для ARM64 ==="
 cd "$WORK"
@@ -46,11 +46,19 @@ echo "Компилирую musl..."
 make -j$(nproc)
 sudo make install
 
-cd "$WORK"
-
-# Создаём симлинки для musl-компилятора
+# Создаём симлинки в /usr/local/bin (в PATH)
+echo "Создаю симлинки для musl-компилятора..."
 sudo ln -sf /opt/musl-aarch64/bin/aarch64-linux-gnu-gcc /usr/local/bin/aarch64-linux-gnu-cc
 sudo ln -sf /opt/musl-aarch64/bin/aarch64-linux-gnu-g++ /usr/local/bin/aarch64-linux-gnu-c++
+sudo ln -sf /opt/musl-aarch64/bin/aarch64-linux-gnu-ld /usr/local/bin/aarch64-linux-gnu-ld
+sudo ln -sf /opt/musl-aarch64/bin/aarch64-linux-gnu-ar /usr/local/bin/aarch64-linux-gnu-ar
+sudo ln -sf /opt/musl-aarch64/bin/aarch64-linux-gnu-strip /usr/local/bin/aarch64-linux-gnu-strip
+
+# Проверяем, что симлинки работают
+echo "Проверяю компилятор..."
+aarch64-linux-gnu-cc --version || echo "ОШИБКА: компилятор не найден!"
+
+cd "$WORK"
 
 echo "Скачиваю исходники toybox..."
 curl -sS -fL --retry 3 -o toybox.tar.gz \
