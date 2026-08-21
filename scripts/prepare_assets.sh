@@ -25,20 +25,32 @@ cp "$WORK/proot" "$JNILIB_DIR/libproot.so"
 chmod 0755 "$JNILIB_DIR/libproot.so"
 echo "[OK] proot готов"
 
-# 2. Toybox (компиляция из исходников)
-echo "=== Устанавливаю кросс-компилятор ==="
+# 2. Toybox с musl libc (полностью статический)
+echo "=== Устанавливаю кросс-компилятор и musl ==="
 sudo apt-get update -qq
-sudo apt-get install -y -qq build-essential gcc-aarch64-linux-gnu
+sudo apt-get install -y -qq build-essential gcc-aarch64-linux-gnu musl-tools
 
-echo "=== Компилирую toybox для ARM64 ==="
+echo "=== Компилирую toybox с musl для ARM64 ==="
 cd "$WORK"
 
-# Создаём симлинки для toybox (он ищет *-cc, *-ld и т.д.)
-sudo ln -sf /usr/bin/aarch64-linux-gnu-gcc /usr/local/bin/aarch64-linux-gnu-cc
-sudo ln -sf /usr/bin/aarch64-linux-gnu-g++ /usr/local/bin/aarch64-linux-gnu-c++
-sudo ln -sf /usr/bin/aarch64-linux-gnu-ld /usr/local/bin/aarch64-linux-gnu-ld
-sudo ln -sf /usr/bin/aarch64-linux-gnu-ar /usr/local/bin/aarch64-linux-gnu-ar
-sudo ln -sf /usr/bin/aarch64-linux-gnu-strip /usr/local/bin/aarch64-linux-gnu-strip
+# Скачиваем musl libc для ARM64
+echo "Скачиваю musl libc для ARM64..."
+curl -sS -fL --retry 3 -o musl.tar.gz \
+    "https://musl.libc.org/releases/musl-1.2.4.tar.gz"
+tar xzf musl.tar.gz
+cd musl-1.2.4
+
+# Компилируем musl для ARM64
+echo "Компилирую musl..."
+./configure --prefix=/opt/musl-aarch64 --target=aarch64-linux-gnu
+make -j$(nproc)
+sudo make install
+
+cd "$WORK"
+
+# Создаём симлинки для musl-компилятора
+sudo ln -sf /opt/musl-aarch64/bin/aarch64-linux-gnu-gcc /usr/local/bin/aarch64-linux-gnu-cc
+sudo ln -sf /opt/musl-aarch64/bin/aarch64-linux-gnu-g++ /usr/local/bin/aarch64-linux-gnu-c++
 
 echo "Скачиваю исходники toybox..."
 curl -sS -fL --retry 3 -o toybox.tar.gz \
@@ -46,27 +58,32 @@ curl -sS -fL --retry 3 -o toybox.tar.gz \
 tar xzf toybox.tar.gz
 cd toybox-0.8.9
 
-# Создаём конфигурацию
 echo "Создаю конфигурацию toybox..."
 make defconfig
 
-# Включаем статическую линковку
+# Статическая линковка с musl
 sed -i 's/# CONFIG_TOYBOX_STATIC is not set/CONFIG_TOYBOX_STATIC=y/' .config
 
-# Отключаем утилиты, требующие libcrypt (избегаем ошибки линковки)
+# Отключаем утилиты, требующие libcrypt
 sed -i 's/CONFIG_PASSWD=y/# CONFIG_PASSWD is not set/' .config
 sed -i 's/CONFIG_SU=y/# CONFIG_SU is not set/' .config
 sed -i 's/CONFIG_LOGIN=y/# CONFIG_LOGIN is not set/' .config
 sed -i 's/CONFIG_MKPASSWD=y/# CONFIG_MKPASSWD is not set/' .config
 
-# Компилируем с игнорированием предупреждений как ошибок
-echo "Компиляция toybox (это займёт 2-5 минут)..."
-make CROSS_COMPILE=aarch64-linux-gnu- EXTRA_CFLAGS="-Wno-error" -j$(nproc)
+echo "Компиляция toybox с musl (2-5 минут)..."
+make CROSS_COMPILE=aarch64-linux-gnu- EXTRA_CFLAGS="-static -Wno-error" -j$(nproc)
 
 if [ -f "toybox" ]; then
-    cp toybox "$ASSETS_DIR/toybox"
-    chmod 0755 "$ASSETS_DIR/toybox"
-    echo "[OK] toybox скомпилирован (статический)"
+    # Проверяем, что бинарник статический
+    if file toybox | grep -q "statically linked"; then
+        cp toybox "$ASSETS_DIR/toybox"
+        chmod 0755 "$ASSETS_DIR/toybox"
+        echo "[OK] toybox скомпилирован (статический с musl)"
+    else
+        echo "[ERROR] toybox не статический!"
+        file toybox
+        exit 1
+    fi
 else
     echo "[ERROR] не удалось скомпилировать toybox"
     exit 1
@@ -98,4 +115,4 @@ echo
 echo "=== Файлы в jniLibs ==="
 ls -lh "$JNILIB_DIR"
 echo
-echo "=== prepare_assets.sh завершён успешно ==="
+echo "=== prepare_assets.sh завершён ==="
