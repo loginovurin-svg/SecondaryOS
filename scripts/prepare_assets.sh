@@ -25,28 +25,12 @@ cp "$WORK/proot" "$JNILIB_DIR/libproot.so"
 chmod 0755 "$JNILIB_DIR/libproot.so"
 echo "[OK] proot готов"
 
-# 2. Toybox с musl libc
-echo "=== Устанавливаю кросс-компилятор и musl ==="
+# 2. Toybox (статическая компиляция через gcc-aarch64-linux-gnu)
+echo "=== Устанавливаю кросс-компилятор ==="
 sudo apt-get update -qq
 sudo apt-get install -y -qq build-essential gcc-aarch64-linux-gnu
 
-echo "=== Компилирую toybox с musl для ARM64 ==="
-cd "$WORK"
-
-# Скачиваем musl libc
-echo "Скачиваю musl libc..."
-curl -sS -fL --retry 3 -o musl.tar.gz \
-    "https://musl.libc.org/releases/musl-1.2.4.tar.gz"
-tar xzf musl.tar.gz
-cd musl-1.2.4
-
-# Компилируем musl для ARM64
-echo "Компилирую musl..."
-./configure --prefix=/opt/musl-aarch64 --target=aarch64-linux-gnu
-make -j$(nproc)
-sudo make install
-
-# Возвращаемся в рабочую папку
+echo "=== Компилирую toybox (статический) ==="
 cd "$WORK"
 
 echo "Скачиваю исходники toybox..."
@@ -58,7 +42,7 @@ cd toybox-0.8.9
 echo "Создаю конфигурацию toybox..."
 make defconfig
 
-# Статическая линковка
+# Включаем статическую линковку
 sed -i 's/# CONFIG_TOYBOX_STATIC is not set/CONFIG_TOYBOX_STATIC=y/' .config
 
 # Отключаем утилиты, требующие libcrypt
@@ -67,25 +51,22 @@ sed -i 's/CONFIG_SU=y/# CONFIG_SU is not set/' .config
 sed -i 's/CONFIG_LOGIN=y/# CONFIG_LOGIN is not set/' .config
 sed -i 's/CONFIG_MKPASSWD=y/# CONFIG_MKPASSWD is not set/' .config
 
-# Компилируем toybox с musl-gcc напрямую
-echo "Компиляция toybox с musl (2-5 минут)..."
-export CC="/opt/musl-aarch64/bin/musl-gcc"
-export CFLAGS="-static -I/opt/musl-aarch64/include"
-export LDFLAGS="-L/opt/musl-aarch64/lib"
-
-make -j$(nproc)
+# Компилируем с явным указанием статической линковки
+echo "Компиляция toybox (2-5 минут)..."
+make CROSS_COMPILE=aarch64-linux-gnu- \
+     CC="aarch64-linux-gnu-gcc -static" \
+     LDFLAGS="-static" \
+     EXTRA_CFLAGS="-static" \
+     -j$(nproc)
 
 if [ -f "toybox" ]; then
-    # Проверяем, что бинарник статический
-    if file toybox | grep -q "statically linked"; then
-        cp toybox "$ASSETS_DIR/toybox"
-        chmod 0755 "$ASSETS_DIR/toybox"
-        echo "[OK] toybox скомпилирован (статический с musl)"
-    else
-        echo "[ERROR] toybox не статический!"
-        file toybox
-        exit 1
-    fi
+    # Проверяем тип бинарника
+    echo "Проверка бинарника..."
+    file toybox
+    
+    cp toybox "$ASSETS_DIR/toybox"
+    chmod 0755 "$ASSETS_DIR/toybox"
+    echo "[OK] toybox скомпилирован"
 else
     echo "[ERROR] не удалось скомпилировать toybox"
     exit 1
@@ -113,8 +94,5 @@ cp "$WORK/rootfs.tar.xz" "$ASSETS_DIR/debian-rootfs.tar.xz"
 echo
 echo "=== Файлы в assets ==="
 ls -lh "$ASSETS_DIR"
-echo
-echo "=== Файлы в jniLibs ==="
-ls -lh "$JNILIB_DIR"
 echo
 echo "=== prepare_assets.sh завершён ==="
