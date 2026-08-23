@@ -4,7 +4,9 @@
 
 set -e
 
-ASSETS_DIR="app/src/main/assets"
+# Получаем абсолютный путь к корню проекта
+PROJECT_ROOT="$(pwd)"
+ASSETS_DIR="$PROJECT_ROOT/app/src/main/assets"
 mkdir -p "$ASSETS_DIR"
 
 echo "=== 1. Сборка qemu-aarch64 из исходников ==="
@@ -44,14 +46,14 @@ if [ ! -f "$QEMU_BIN" ]; then
         --disable-pie \
         --prefix="$INSTALL_DIR" || {
         echo "❌ Ошибка конфигурации QEMU"
-        cd ../..
+        cd "$PROJECT_ROOT"
         exit 1
     }
     
     echo "Компиляция (используем все доступные ядра)..."
     make -j$(nproc) || {
         echo "❌ Ошибка компиляции QEMU"
-        cd ../..
+        cd "$PROJECT_ROOT"
         exit 1
     }
     
@@ -59,11 +61,12 @@ if [ ! -f "$QEMU_BIN" ]; then
     make install
     
     # Копируем готовый статический бинарник в нужное место
+    # Используем абсолютный путь для ASSETS_DIR
     cp "$INSTALL_DIR/bin/qemu-aarch64" "$ASSETS_DIR/qemu-aarch64"
     chmod +x "$ASSETS_DIR/qemu-aarch64"
     
-    # Возвращаемся обратно
-    cd ../..
+    # Возвращаемся в корень проекта
+    cd "$PROJECT_ROOT"
     
     # Очистка исходников и временной директории установки (экономим место в репозитории)
     rm -rf "$ASSETS_DIR/qemu-${QEMU_VERSION}"
@@ -73,7 +76,7 @@ if [ ! -f "$QEMU_BIN" ]; then
         echo "✅ qemu-aarch64 собран (ARM64, статический)."
         file "$QEMU_BIN"
     else
-        echo "⚠️ ВНИМАНИЕ: файл может быть не для ARM64"
+        echo "️ ВНИМАНИЕ: файл может быть не для ARM64"
         file "$QEMU_BIN"
     fi
     
