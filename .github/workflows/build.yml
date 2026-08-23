@@ -42,6 +42,10 @@ jobs:
         curl -L -o gradle/wrapper/gradle-wrapper.jar https://github.com/gradle/gradle/raw/v8.7.0/gradle/wrapper/gradle-wrapper.jar
 
     - name: Build with Gradle
+      env:
+        # КРИТИЧЕСКИ ВАЖНО: Передаем настройки памяти напрямую в среду сборки GitHub Actions,
+        # чтобы переопределить любые дефолтные ограничения и избежать Java heap space.
+        ORG_GRADLE_PROJECT_org.gradle.jvmargs: "-Xmx2048m -Dfile.encoding=UTF-8"
       run: |
         chmod +x gradlew
         ./gradlew assembleDebug
