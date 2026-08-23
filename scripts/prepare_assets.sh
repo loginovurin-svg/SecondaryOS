@@ -15,7 +15,6 @@ QEMU_BIN="$ASSETS_DIR/qemu-aarch64"
 if [ ! -f "$QEMU_BIN" ]; then
     echo "Скачивание исходников QEMU..."
     
-    # Стабильная версия QEMU
     QEMU_VERSION="8.2.4"
     QEMU_SRC="qemu-${QEMU_VERSION}.tar.xz"
     QEMU_URL="https://download.qemu.org/${QEMU_SRC}"
@@ -33,10 +32,8 @@ if [ ! -f "$QEMU_BIN" ]; then
     echo "Настройка и компиляция QEMU user-mode (это займёт 5-10 минут)..."
     cd "qemu-${QEMU_VERSION}"
     
-    # Устанавливаем префикс в локальную директорию, доступную для записи без sudo
     INSTALL_DIR="$(pwd)/qemu-install"
     
-    # Конфигурируем только user-mode эмуляцию для aarch64
     ./configure \
         --target-list=aarch64-linux-user \
         --static \
@@ -52,35 +49,29 @@ if [ ! -f "$QEMU_BIN" ]; then
     
     echo "Компиляция (используем все доступные ядра)..."
     make -j$(nproc) || {
-        echo "❌ Ошибка компиляции QEMU"
+        echo " Ошибка компиляции QEMU"
         cd "$PROJECT_ROOT"
         exit 1
     }
     
-    echo "Установка в локальную директорию (без sudo)..."
+    echo "Установка в локальную директорию..."
     make install
     
-    # Копируем готовый статический бинарник в нужное место
-    # Используем абсолютный путь для ASSETS_DIR
     cp "$INSTALL_DIR/bin/qemu-aarch64" "$ASSETS_DIR/qemu-aarch64"
     chmod +x "$ASSETS_DIR/qemu-aarch64"
     
-    # Возвращаемся в корень проекта
     cd "$PROJECT_ROOT"
     
-    # Очистка исходников и временной директории установки (экономим место в репозитории)
     rm -rf "$ASSETS_DIR/qemu-${QEMU_VERSION}"
     
-    # Проверка архитектуры
     if file "$QEMU_BIN" | grep -q "aarch64\|ARM64"; then
         echo "✅ qemu-aarch64 собран (ARM64, статический)."
         file "$QEMU_BIN"
     else
-        echo "️ ВНИМАНИЕ: файл может быть не для ARM64"
+        echo "⚠️ ВНИМАНИЕ: файл может быть не для ARM64"
         file "$QEMU_BIN"
     fi
     
-    # Показываем размер
     SIZE=$(stat -c%s "$QEMU_BIN" 2>/dev/null || stat -f%z "$QEMU_BIN")
     echo "  Размер бинарника: $((SIZE / 1024 / 1024)) МБ"
     
@@ -94,7 +85,6 @@ ROOTFS_ARCHIVE="$ASSETS_DIR/debian-rootfs.tar.xz"
 if [ ! -f "$ROOTFS_ARCHIVE" ]; then
     echo "Скачивание Debian rootfs (это займёт время, ~180-200 МБ)..."
     
-    # Официальный Debian cloud image nocloud (минимальный, без лишних сервисов)
     ROOTFS_URL="https://cdimage.debian.org/cdimage/cloud/bullseye/latest/debian-11-nocloud-arm64.tar.xz"
     
     if ! curl -L --fail -o "$ROOTFS_ARCHIVE" "$ROOTFS_URL"; then
@@ -103,7 +93,6 @@ if [ ! -f "$ROOTFS_ARCHIVE" ]; then
         exit 1
     fi
     
-    # Проверка размера (должно быть > 100 МБ)
     FILE_SIZE=$(stat -c%s "$ROOTFS_ARCHIVE" 2>/dev/null || stat -f%z "$ROOTFS_ARCHIVE")
     if [ "$FILE_SIZE" -lt 100000000 ]; then
         echo "❌ Файл слишком мал ($FILE_SIZE байт). Ссылка устарела."
@@ -122,8 +111,4 @@ echo "=== Итог ==="
 echo "Файлы в assets:"
 ls -lh "$ASSETS_DIR/"
 echo ""
-echo "✅ Assets готовы. APK будет включать:"
-echo "  - qemu-aarch64 (собранный из исходников, ARM64, статический)"
-echo "  - debian-rootfs.tar.xz (официальный образ Debian 11)"
-echo ""
-echo "⚠️ Размер APK будет около 200-250 МБ."
+echo "✅ Assets готовы."
