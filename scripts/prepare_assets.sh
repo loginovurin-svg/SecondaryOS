@@ -1,6 +1,6 @@
 #!/bin/bash
 # scripts/prepare_assets.sh
-# Скачивает готовый ARM64 бинарник QEMU из Termux и Debian rootfs
+# Устанавливает ARM64 бинарник QEMU через multiarch apt и скачивает Debian rootfs
 
 set -e
 
@@ -8,47 +8,34 @@ PROJECT_ROOT="$(pwd)"
 ASSETS_DIR="$PROJECT_ROOT/app/src/main/assets"
 mkdir -p "$ASSETS_DIR"
 
-echo "=== 1. Скачивание готового qemu-aarch64 (ARM64) из Termux ==="
+echo "=== 1. Получение qemu-aarch64 (ARM64) через multiarch apt ==="
 QEMU_BIN="$ASSETS_DIR/qemu-aarch64"
 
 if [ ! -f "$QEMU_BIN" ]; then
-    echo "Скачивание qemu-aarch64 из репозитория Termux..."
+    echo "Добавление архитектуры arm64 и установка qemu-user-static..."
     
-    # Termux предоставляет готовые ARM64 бинарники
-    # Прямая ссылка на пакет qemu-user-static
-    QEMU_URL="https://packages.termux.dev/apt/termux-main/pool/main/q/qemu/qemu-user-static_8.2.4-1_aarch64.deb"
+    # Добавляем поддержку arm64 архитектуры
+    sudo dpkg --add-architecture arm64
+    sudo apt-get update
     
-    curl -L --fail -o "$ASSETS_DIR/qemu.deb" "$QEMU_URL" || {
-        echo "❌ Не удалось скачать из Termux. Пробуем альтернативу..."
-        
-        # Альтернатива: Debian snapshot
-        QEMU_URL="http://snapshot.debian.org/archive/debian/20240101T000000Z/pool/main/q/qemu/qemu-user-static_8.2.0+dfsg-1_arm64.deb"
-        curl -L --fail -o "$ASSETS_DIR/qemu.deb" "$QEMU_URL" || {
-            echo "❌ Все источники недоступны"
-            exit 1
-        }
+    # Устанавливаем ARM64 версию qemu-user-static
+    sudo apt-get install -y qemu-user-static:arm64 || {
+        echo "❌ Не удалось установить qemu-user-static:arm64"
+        exit 1
     }
     
-    # Извлекаем бинарник из deb пакета
-    echo "Извлечение бинарника из deb пакета..."
-    cd "$ASSETS_DIR"
-    ar x qemu.deb
-    tar -xf data.tar.xz --wildcards './usr/bin/qemu-aarch64-static' --strip-components=3
-    mv qemu-aarch64-static qemu-aarch64
-    chmod +x qemu-aarch64
-    
-    # Очистка
-    rm -f qemu.deb data.tar.xz control.tar.xz debian-binary
-    
-    cd "$PROJECT_ROOT"
+    # Копируем бинарник
+    cp /usr/bin/qemu-aarch64-static "$QEMU_BIN"
+    chmod +x "$QEMU_BIN"
     
     # Проверка архитектуры
     if file "$QEMU_BIN" | grep -qi "aarch64\|arm64"; then
-        echo "✅ qemu-aarch64 загружен (ARM64)."
+        echo "✅ qemu-aarch64 получен (ARM64)."
         file "$QEMU_BIN"
     else
-        echo "️ ВНИМАНИЕ: файл может быть не для ARM64"
+        echo "❌ ОШИБКА: файл не является ARM64 бинарником!"
         file "$QEMU_BIN"
+        exit 1
     fi
     
     SIZE=$(stat -c%s "$QEMU_BIN" 2>/dev/null || stat -f%z "$QEMU_BIN")
