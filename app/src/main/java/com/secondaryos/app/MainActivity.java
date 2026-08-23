@@ -75,7 +75,7 @@ public class MainActivity extends Activity {
                 shellWriter.flush();
                 inputEditText.setText("");
             } else {
-                logToUi("⚠ Оболочка ещё не запущена или команда пустая.");
+                logToUi(" Оболочка ещё не запущена или команда пустая.");
             }
         });
 
@@ -102,14 +102,14 @@ public class MainActivity extends Activity {
             }
         }
 
-        logToUi("⚙ Распаковка rootfs из APK (30-90 сек)...");
+        logToUi("⚙ Распаковка rootfs из APK (30-60 сек)...");
         rootfsDir.mkdirs();
 
         try {
-            File tempArchive = new File(getCacheDir(), "debian-rootfs.tar.xz");
+            File tempArchive = new File(getCacheDir(), "debian-rootfs.tar.gz");
             
             // Копируем архив из assets
-            try (InputStream is = getAssets().open("debian-rootfs.tar.xz");
+            try (InputStream is = getAssets().open("debian-rootfs.tar.gz");
                  FileOutputStream fos = new FileOutputStream(tempArchive)) {
                 byte[] buffer = new byte[65536];
                 int read;
@@ -119,54 +119,32 @@ public class MainActivity extends Activity {
             }
             logToUi("  архив скопирован в cache, запускаем распаковку...");
 
-            // Пробуем несколько методов распаковки
-            String[] extractCommands = {
-                // Метод 1: tar с автоматическим распознаванием (Android toybox)
-                "tar -xJf '" + tempArchive.getAbsolutePath() + "' -C '" + rootfsDir.getAbsolutePath() + "'",
-                // Метод 2: xz + tar через pipe
-                "xz -d -c '" + tempArchive.getAbsolutePath() + "' | tar -xf - -C '" + rootfsDir.getAbsolutePath() + "'",
-                // Метод 3: unxz + tar
-                "unxz -c '" + tempArchive.getAbsolutePath() + "' | tar -xf - -C '" + rootfsDir.getAbsolutePath() + "'"
-            };
+            // Android toybox поддерживает tar -xzf (gzip)
+            ProcessBuilder pb = new ProcessBuilder(
+                    "tar", "-xzf", 
+                    tempArchive.getAbsolutePath(),
+                    "-C", rootfsDir.getAbsolutePath()
+            );
+            pb.redirectErrorStream(true);
+            Process extractProcess = pb.start();
             
-            boolean success = false;
-            for (int i = 0; i < extractCommands.length; i++) {
-                logToUi("  пробуем метод " + (i+1) + "...");
-                
-                ProcessBuilder pb = new ProcessBuilder("sh", "-c", extractCommands[i]);
-                pb.redirectErrorStream(true);
-                Process extractProcess = pb.start();
-                
-                // Читаем вывод для отладки
-                BufferedReader reader = new BufferedReader(new InputStreamReader(extractProcess.getInputStream()));
-                String line;
-                while ((line = reader.readLine()) != null) {
-                    logToUi("    " + line);
-                }
-                
-                int exitCode = extractProcess.waitFor();
-                
-                // Проверяем результат
-                if (exitCode == 0 && rootfsDir.list() != null && rootfsDir.list().length > 0) {
-                    success = true;
-                    logToUi("  ✅ метод " + (i+1) + " сработал!");
-                    break;
-                } else {
-                    logToUi("   метод " + (i+1) + " не сработал (код: " + exitCode + "), пробуем следующий...");
-                    // Очищаем директорию для следующей попытки
-                    deleteDirectory(rootfsDir);
-                    rootfsDir.mkdirs();
-                }
+            // Читаем вывод для отладки
+            BufferedReader reader = new BufferedReader(new InputStreamReader(extractProcess.getInputStream()));
+            String line;
+            while ((line = reader.readLine()) != null) {
+                logToUi("  " + line);
             }
+            
+            int exitCode = extractProcess.waitFor();
             
             // Удаляем временный архив
             tempArchive.delete();
             
-            if (!success) {
-                logToUi("❌ все методы распаковки не сработали");
-                logToUi("  проверьте, что в assets лежит валидный debian-rootfs.tar.xz");
-            } else {
+            if (exitCode == 0 && rootfsDir.list() != null && rootfsDir.list().length > 0) {
                 logToUi("✅ rootfs распакован (" + rootfsDir.list().length + " объектов).");
+            } else {
+                logToUi("❌ ошибка распаковки rootfs (код: " + exitCode + ").");
+                logToUi("  проверьте, что в assets лежит валидный debian-rootfs.tar.gz");
             }
 
         } catch (Exception e) {
@@ -181,7 +159,7 @@ public class MainActivity extends Activity {
             return;
         }
 
-        logToUi("⚙ подготовка qemu-aarch64...");
+        logToUi(" подготовка qemu-aarch64...");
         try {
             try (InputStream is = getAssets().open("qemu-aarch64");
                  FileOutputStream fos = new FileOutputStream(qemuBinary)) {
@@ -219,7 +197,7 @@ public class MainActivity extends Activity {
         }
 
         if (!qemuBinary.exists()) {
-            logToUi(" невозможно запустить оболочку: qemu-aarch64 не найден.");
+            logToUi("❌ невозможно запустить оболочку: qemu-aarch64 не найден.");
             return;
         }
 
@@ -268,23 +246,6 @@ public class MainActivity extends Activity {
 
     private void logToUi(final String message) {
         runOnUiThread(() -> outputTextView.append(message + "\n"));
-    }
-    
-    // Вспомогательный метод для рекурсивного удаления директории
-    private void deleteDirectory(File dir) {
-        if (dir.exists()) {
-            File[] files = dir.listFiles();
-            if (files != null) {
-                for (File file : files) {
-                    if (file.isDirectory()) {
-                        deleteDirectory(file);
-                    } else {
-                        file.delete();
-                    }
-                }
-            }
-            dir.delete();
-        }
     }
 
     @Override
