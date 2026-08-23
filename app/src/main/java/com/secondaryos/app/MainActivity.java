@@ -14,32 +14,16 @@ import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.PrintWriter;
 
-/**
- * SecondaryOS — MainActivity
- * Фаза 1: Запуск Debian 11 (arm64) через QEMU user-mode на Android 16.
- *
- * АРХИТЕКТУРА (важно!):
- * - proot НЕ используется — seccomp Android 16 блокирует ptrace → SIGSYS.
- * - QEMU user-mode транслирует syscall'ы гостя (glibc Debian) в syscall'ы хоста
- *   (Bionic Android) БЕЗ ptrace → seccomp не срабатывает.
- * - Флаг -L указывает sysroot (где лежит libc и библиотеки Debian).
- * - Графика: пока консоль. В Фазе 2 подключим Wayland (Android = compositor).
- */
 public class MainActivity extends Activity {
 
-    // UI-элементы
     private TextView outputTextView;
     private EditText inputEditText;
     private Button sendButton;
 
-    // Процесс и потоки оболочки
     private Process shellProcess;
     private PrintWriter shellWriter;
     private Thread outputReaderThread;
 
-    // Пути внутри приватной директории приложения
-    // getFilesDir() → /data/user/0/com.secondaryos.app/files/
-    // getCacheDir() → /data/user/0/com.secondaryos.app/cache/
     private File rootfsDir;
     private File qemuBinary;
 
@@ -47,15 +31,13 @@ public class MainActivity extends Activity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
 
-        // === Инициализация путей ===
         rootfsDir = new File(getFilesDir(), "debian-rootfs");
         qemuBinary = new File(getFilesDir(), "qemu-aarch64");
 
-        // === Простой UI: тёмный терминал ===
         outputTextView = new TextView(this);
         outputTextView.setText("SecondaryOS — инициализация...\n");
-        outputTextView.setTextColor(0xFF00FF41);      // зелёный терминальный
-        outputTextView.setBackgroundColor(0xFF0A0A0A); // почти чёрный фон
+        outputTextView.setTextColor(0xFF00FF41);
+        outputTextView.setBackgroundColor(0xFF0A0A0A);
         outputTextView.setPadding(16, 16, 16, 16);
         outputTextView.setTextSize(13);
         outputTextView.setTypeface(android.graphics.Typeface.MONOSPACE);
@@ -69,7 +51,6 @@ public class MainActivity extends Activity {
         sendButton = new Button(this);
         sendButton.setText("ВЫПОЛНИТЬ");
 
-        // Вертикальная компоновка
         LinearLayout layout = new LinearLayout(this);
         layout.setOrientation(LinearLayout.VERTICAL);
         layout.setBackgroundColor(0xFF0A0A0A);
@@ -87,7 +68,6 @@ public class MainActivity extends Activity {
 
         setContentView(layout);
 
-        // === Обработчик кнопки отправки команды ===
         sendButton.setOnClickListener(v -> {
             String cmd = inputEditText.getText().toString();
             if (shellWriter != null && !cmd.isEmpty()) {
@@ -99,39 +79,20 @@ public class MainActivity extends Activity {
             }
         });
 
-        // === Запуск bootstrap в фоновом потоке (не блокируем UI) ===
         new Thread(this::bootstrap).start();
     }
 
-    /**
-     * Главная последовательность запуска (выполняется в фоне):
-     * 1. Распаковать rootfs из assets
-     * 2. Подготовить qemu-aarch64 из assets
-     * 3. Диагностика
-     * 4. Запуск оболочки
-     */
     private void bootstrap() {
         extractRootfs();
         prepareQemu();
         runDiagnostics();
 
-        // Небольшая пауза, чтобы пользователь успел прочитать диагностику
         try { Thread.sleep(500); } catch (InterruptedException ignored) {}
 
         startInteractiveShell();
     }
 
-    /**
-     * Распаковка debian-rootfs.tar.xz из assets во внутреннюю память.
-     *
-     * Почему tar.xz, а не tar.gz:
-     * - Официальные образы Debian cloud идут в .tar.xz (меньше размер APK).
-     * - Android 11+ (toybox) поддерживает xz из коробки.
-     *
-     * Схема: копируем архив в cache → xz -d -c | tar -xf - -C rootfsDir
-     */
     private void extractRootfs() {
-        // Если уже распакован и не пуст — пропускаем (экономим время при повторных запусках)
         if (rootfsDir.exists() && rootfsDir.isDirectory()) {
             String[] files = rootfsDir.list();
             if (files != null && files.length > 0) {
@@ -140,11 +101,10 @@ public class MainActivity extends Activity {
             }
         }
 
-        logToUi("⚙ Распаковка rootfs из APK (30-90 сек)...");
+        logToUi(" Распаковка rootfs из APK (30-90 сек)...");
         rootfsDir.mkdirs();
 
         try {
-            // 1. Копируем архив из assets во временный файл в cache
             File tempArchive = new File(getCacheDir(), "debian-rootfs.tar.xz");
             try (InputStream is = getAssets().open("debian-rootfs.tar.xz");
                  FileOutputStream fos = new FileOutputStream(tempArchive)) {
@@ -156,30 +116,25 @@ public class MainActivity extends Activity {
             }
             logToUi("  архив скопирован в cache, запускаем распаковку...");
 
-            // 2. Распаковываем: xz разжимает поток, tar извлекает файлы
-            //    toybox в Android 11+ поддерживает обе утилиты.
             ProcessBuilder pb = new ProcessBuilder(
-                    "sh", "-c",
-                    "xz -d -c '" + tempArchive.getAbsolutePath() + "' | tar -xf - -C '" + rootfsDir.getAbsolutePath() + "'"
+                    "tar", "-xJf", tempArchive.getAbsolutePath(),
+                    "-C", rootfsDir.getAbsolutePath()
             );
             pb.redirectErrorStream(true);
             Process extractProcess = pb.start();
 
-            // Читаем вывод (ошибки tar/xz попадут сюда)
             BufferedReader reader = new BufferedReader(new InputStreamReader(extractProcess.getInputStream()));
             String line;
             while ((line = reader.readLine()) != null) {
-                // Игнорируем штатный вывод tar, но если будет ошибка — она тоже здесь
             }
 
             int exitCode = extractProcess.waitFor();
-            tempArchive.delete(); // удаляем временный архив, экономим место
+            tempArchive.delete();
 
             if (exitCode == 0 && rootfsDir.list() != null && rootfsDir.list().length > 0) {
                 logToUi("✅ rootfs распакован (" + rootfsDir.list().length + " объектов).");
             } else {
                 logToUi("❌ ошибка распаковки rootfs (код: " + exitCode + ").");
-                logToUi("  проверьте, что в assets лежит валидный debian-rootfs.tar.xz");
             }
 
         } catch (Exception e) {
@@ -188,12 +143,6 @@ public class MainActivity extends Activity {
         }
     }
 
-    /**
-     * Копирование бинарника qemu-aarch64 из assets и установка прав на выполнение.
-     *
-     * Важно: бинарник ДОЛЖЕН быть скомпилирован под aarch64 (хост = устройство).
-     * В prepare_assets.sh мы собираем его из исходников именно для ARM64.
-     */
     private void prepareQemu() {
         if (qemuBinary.exists() && qemuBinary.canExecute()) {
             logToUi("✅ qemu-aarch64 уже готов.");
@@ -210,7 +159,6 @@ public class MainActivity extends Activity {
                     fos.write(buffer, 0, read);
                 }
             }
-            // chmod 700 — только владелец (приложение) может читать/запускать
             Runtime.getRuntime().exec(new String[]{"chmod", "700", qemuBinary.getAbsolutePath()}).waitFor();
             logToUi("✅ qemu-aarch64 готов.");
         } catch (Exception e) {
@@ -218,9 +166,6 @@ public class MainActivity extends Activity {
         }
     }
 
-    /**
-     * Быстрая диагностика перед запуском.
-     */
     private void runDiagnostics() {
         if (rootfsDir.exists() && rootfsDir.list() != null && rootfsDir.list().length > 0) {
             logToUi("[OK] debian-rootfs: " + rootfsDir.list().length + " объектов");
@@ -231,23 +176,10 @@ public class MainActivity extends Activity {
         if (qemuBinary.exists() && qemuBinary.canExecute()) {
             logToUi("[OK] qemu-aarch64 готов к запуску.");
         } else {
-            logToUi("[FAIL] qemu-aarch64 отсутствует — скачайте его в prepare_assets.sh.");
+            logToUi("[FAIL] qemu-aarch64 отсутствует.");
         }
     }
 
-    /**
-     * Запуск интерактивной оболочки Debian через QEMU user-mode.
-     *
-     * Ключевые флаги:
-     *   -L <rootfs>  — sysroot гостя (где лежит /lib, /usr/lib, libc.so.6 от Debian).
-     *                  Без этого QEMU не найдёт glibc и упадёт.
-     *   -E VAR=val   — переменные окружения гостя (PATH, HOME, TERM).
-     *
-     * ПОЧЕМУ ЭТО РАБОТАЕТ НА ANDROID 16:
-     *   QEMU user-mode НЕ использует ptrace. Он транслирует syscall'ы на уровне
-     *   библиотеки (syscall-emulation), поэтому seccomp-bpf хоста их не блокирует.
-     *   Proot же делал ptrace(PTRACE_SYSCALL) → seccomp убивал процесс с SIGSYS.
-     */
     private void startInteractiveShell() {
         if (!rootfsDir.exists() || !qemuBinary.exists()) {
             logToUi("❌ невозможно запустить оболочку: файлы не готовы.");
@@ -267,17 +199,15 @@ public class MainActivity extends Activity {
             };
 
             ProcessBuilder pb = new ProcessBuilder(command);
-            pb.directory(rootfsDir);          // рабочая директория процесса
-            pb.redirectErrorStream(true);     // stderr → stdout (ловим всё)
+            pb.directory(rootfsDir);
+            pb.redirectErrorStream(true);
 
             shellProcess = pb.start();
 
-            // Поток чтения вывода (чтобы UI не завис)
             outputReaderThread = new Thread(this::readShellOutput);
             outputReaderThread.setDaemon(true);
             outputReaderThread.start();
 
-            // Поток записи команд (stdin оболочки)
             shellWriter = new PrintWriter(shellProcess.getOutputStream(), true);
 
             logToUi("✅ оболочка запущена. введите 'ls /' для проверки.");
@@ -288,10 +218,6 @@ public class MainActivity extends Activity {
         }
     }
 
-    /**
-     * Чтение вывода оболочки в фоновом потоке.
-     * Работает пока процесс жив. При завершении — выходим из цикла.
-     */
     private void readShellOutput() {
         try (BufferedReader reader = new BufferedReader(new InputStreamReader(shellProcess.getInputStream()))) {
             String line;
@@ -303,11 +229,6 @@ public class MainActivity extends Activity {
         }
     }
 
-    // === Утилиты ===
-
-    /**
-     * Безопасный вывод в UI из любого потока.
-     */
     private void logToUi(final String message) {
         runOnUiThread(() -> outputTextView.append(message + "\n"));
     }
@@ -315,7 +236,6 @@ public class MainActivity extends Activity {
     @Override
     protected void onDestroy() {
         super.onDestroy();
-        // Корректное завершение: убиваем процесс и закрываем потоки
         if (shellProcess != null) {
             shellProcess.destroy();
         }
