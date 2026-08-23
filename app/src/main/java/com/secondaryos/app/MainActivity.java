@@ -116,9 +116,10 @@ public class MainActivity extends Activity {
             }
             logToUi("  архив скопирован в cache, запускаем распаковку...");
 
+            // Используем xz + tar через pipe (toybox поддерживает обе утилиты)
             ProcessBuilder pb = new ProcessBuilder(
-                    "tar", "-xJf", tempArchive.getAbsolutePath(),
-                    "-C", rootfsDir.getAbsolutePath()
+                    "sh", "-c",
+                    "xz -d -c '" + tempArchive.getAbsolutePath() + "' | tar -xf - -C '" + rootfsDir.getAbsolutePath() + "'"
             );
             pb.redirectErrorStream(true);
             Process extractProcess = pb.start();
@@ -213,7 +214,7 @@ public class MainActivity extends Activity {
             logToUi("✅ оболочка запущена. введите 'ls /' для проверки.");
 
         } catch (Exception e) {
-            logToUi("❌ ошибка запуска оболочки: " + e.getMessage());
+            logToUi(" ошибка запуска оболочки: " + e.getMessage());
             e.printStackTrace();
         }
     }
