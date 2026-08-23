@@ -1,6 +1,6 @@
 #!/bin/bash
 # scripts/prepare_assets.sh
-# Цель: Подготовка assets для SecondaryOS (Фаза 1: QEMU user-mode + Debian rootfs)
+# Скачивает QEMU user-mode и Debian 11 rootfs в assets для встраивания в APK
 
 set -e
 
@@ -13,50 +13,49 @@ QEMU_BIN="$ASSETS_DIR/qemu-aarch64"
 
 if [ ! -f "$QEMU_BIN" ]; then
     echo "Скачивание qemu-aarch64..."
-    curl -L -o "$QEMU_BIN" "$QEMU_URL"
+    curl -L --fail -o "$QEMU_BIN" "$QEMU_URL"
     chmod +x "$QEMU_BIN"
     
-    # ПРОВЕРКА АРХИТЕКТУРЫ: бинарник должен быть скомпилирован для ARM64 (хост), 
-    # а не для x86_64. Иначе на устройстве Helio G99 он не запустится.
+    # Проверка архитектуры
     ARCH_CHECK=$(file "$QEMU_BIN" | grep -i "aarch64" || true)
     if [ -z "$ARCH_CHECK" ]; then
-        echo "⚠️ ВНИМАНИЕ: Скачанный qemu-aarch64 НЕ является ARM64-бинарником!"
-        echo "Текущая информация о файле:"
+        echo "⚠️ ВНИМАНИЕ: qemu-aarch64 не является ARM64-бинарником!"
         file "$QEMU_BIN"
-        echo "Для работы на Helio G99 необходим бинарник, скомпилированный под aarch64."
-        echo "Рекомендуется взять бинарник из репозитория Termux или скомпилировать его."
     else
-        echo "✅ qemu-aarch64 успешно загружен и является ARM64-бинарником."
+        echo "✅ qemu-aarch64 загружен (ARM64)."
     fi
 else
     echo "qemu-aarch64 уже существует, пропускаем."
 fi
 
-echo "=== 2. Скачивание rootfs Debian 11 (bullseye) arm64 ==="
-# Официальный образ Debian Cloud Images (nocloud, без лишних сервисов, ~180 МБ)
-ROOTFS_URL="https://cdimage.debian.org/cdimage/cloud/bullseye/latest/debian-11-nocloud-arm64.tar.xz"
-ROOTFS_ARCHIVE="$ASSETS_DIR/debian-rootfs.tar.xz"
+echo "=== 2. Скачивание Debian 11 rootfs (arm64, tar.gz) ==="
+# Официальный nocloud образ Debian 11 для arm64 в формате tar.gz
+# Размер ~180-200 МБ. APK будет большим, но rootfs будет встроен.
+ROOTFS_URL="https://cdimage.debian.org/cdimage/cloud/bullseye/latest/debian-11-nocloud-arm64.tar.gz"
+ROOTFS_ARCHIVE="$ASSETS_DIR/debian-rootfs.tar.gz"
 
 if [ ! -f "$ROOTFS_ARCHIVE" ]; then
-    echo "Скачивание Debian 11 rootfs (это может занять время, размер ~180 МБ)..."
-    curl -L -o "$ROOTFS_ARCHIVE" "$ROOTFS_URL"
+    echo "Скачивание Debian rootfs (это займёт время, ~180 МБ)..."
+    curl -L --fail -o "$ROOTFS_ARCHIVE" "$ROOTFS_URL"
     
-    # ПРОВЕРКА РАЗМЕРА: файл должен быть больше 100 МБ (104857600 байт)
+    # Проверка размера: должно быть больше 100 МБ
     FILE_SIZE=$(stat -c%s "$ROOTFS_ARCHIVE" 2>/dev/null || stat -f%z "$ROOTFS_ARCHIVE")
     if [ "$FILE_SIZE" -lt 100000000 ]; then
-        echo "❌ ОШИБКА: Размер загруженного файла слишком мал ($FILE_SIZE байт)."
-        echo "Скорее всего, ссылка устарела или вернула HTML-страницу ошибки."
+        echo "❌ ОШИБКА: Файл слишком мал ($FILE_SIZE байт). Возможно, ссылка устарела."
         rm -f "$ROOTFS_ARCHIVE"
         exit 1
     fi
-    echo "✅ Debian rootfs успешно загружен (Размер: $FILE_SIZE байт)."
+    echo "✅ Debian rootfs загружен (Размер: $((FILE_SIZE / 1024 / 1024)) МБ)."
 else
     echo "Debian rootfs уже существует, пропускаем."
 fi
 
-echo "=== 3. Очистка от старых артефактов ==="
+echo "=== 3. Очистка старых артефактов ==="
 rm -f "$ASSETS_DIR/proot"
 rm -f "$ASSETS_DIR/busybox"
 rm -f "$ASSETS_DIR/toybox"
+rm -f "$ASSETS_DIR/debian-rootfs.tar.xz"
 
-echo "=== Подготовка assets завершена успешно ==="
+echo "=== Итог ==="
+ls -lh "$ASSETS_DIR/"
+echo "✅ Assets готовы. APK будет включать rootfs."
