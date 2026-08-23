@@ -53,27 +53,30 @@ ROOTFS_ARCHIVE="$ASSETS_DIR/debian-rootfs.tar.gz"
 if [ ! -f "$ROOTFS_ARCHIVE" ]; then
     echo "Скачивание Debian rootfs (tar.gz)..."
     
-    # Используем tar.gz вместо tar.xz - Android toybox поддерживает gzip
-    ROOTFS_URL="https://github.com/AndronixApp/Andronix-Origin/raw/master/Rootfs/Debian/debian-11-arm64.tar.gz"
+    # Используем Docker для извлечения rootfs из официального образа arm64v8/debian:bullseye
+    echo "Извлечение rootfs из Docker образа debian:bullseye (arm64)..."
     
-    curl -L --fail -o "$ROOTFS_ARCHIVE" "$ROOTFS_URL" || {
-        echo "❌ Не удалось скачать rootfs из Andronix. Пробуем альтернативу..."
-        
-        # Альтернатива: Termux
-        ROOTFS_URL="https://github.com/termux/pacman-packages/raw/master/pacman-rootfs-aarch64.tar.gz"
-        curl -L --fail -o "$ROOTFS_ARCHIVE" "$ROOTFS_URL" || {
-            echo "❌ Все источники rootfs недоступны"
-            exit 1
-        }
-    }
+    # Создаем временную директорию
+    TEMP_DIR=$(mktemp -d)
+    cd "$TEMP_DIR"
     
+    # Скачиваем и извлекаем rootfs из Docker образа
+    docker pull --platform linux/arm64 debian:bullseye-slim
+    docker create --name temp-debian debian:bullseye-sleep
+    docker export temp-debian | gzip > "$ROOTFS_ARCHIVE"
+    docker rm temp-debian
+    
+    cd "$PROJECT_ROOT"
+    rm -rf "$TEMP_DIR"
+    
+    # Проверка размера
     FILE_SIZE=$(stat -c%s "$ROOTFS_ARCHIVE" 2>/dev/null || stat -f%z "$ROOTFS_ARCHIVE")
     if [ "$FILE_SIZE" -lt 10000000 ]; then
         echo "❌ Файл слишком мал ($FILE_SIZE байт)."
         rm -f "$ROOTFS_ARCHIVE"
         exit 1
     fi
-    echo "✅ Debian rootfs загружен (Размер: $((FILE_SIZE / 1024 / 1024)) МБ, формат: tar.gz)."
+    echo "✅ Debian rootfs получен (Размер: $((FILE_SIZE / 1024 / 1024)) МБ, формат: tar.gz)."
 else
     echo "Debian rootfs уже существует, пропускаем."
 fi
