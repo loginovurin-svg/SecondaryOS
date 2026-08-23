@@ -18,8 +18,8 @@ import java.io.PrintWriter;
  * SecondaryOS — MainActivity
  * Фаза 1: Запуск Debian 11 (arm64) через QEMU user-mode на Android 16.
  *
- * Архитектура:
- * - proot НЕ используется (seccomp Android 16 блокирует ptrace → SIGSYS).
+ * АРХИТЕКТУРА (важно!):
+ * - proot НЕ используется — seccomp Android 16 блокирует ptrace → SIGSYS.
  * - QEMU user-mode транслирует syscall'ы гостя (glibc Debian) в syscall'ы хоста
  *   (Bionic Android) БЕЗ ptrace → seccomp не срабатывает.
  * - Флаг -L указывает sysroot (где лежит libc и библиотеки Debian).
@@ -140,7 +140,7 @@ public class MainActivity extends Activity {
             }
         }
 
-        logToUi(" Распаковка rootfs из APK (30-90 сек)...");
+        logToUi("⚙ Распаковка rootfs из APK (30-90 сек)...");
         rootfsDir.mkdirs();
 
         try {
@@ -192,8 +192,7 @@ public class MainActivity extends Activity {
      * Копирование бинарника qemu-aarch64 из assets и установка прав на выполнение.
      *
      * Важно: бинарник ДОЛЖЕН быть скомпилирован под aarch64 (хост = устройство).
-     * Если в assets лежит x86_64-версия — получишь "Exec format error".
-     * Проверка архитектуры делается в prepare_assets.sh на этапе сборки.
+     * В prepare_assets.sh мы собираем его из исходников именно для ARM64.
      */
     private void prepareQemu() {
         if (qemuBinary.exists() && qemuBinary.canExecute()) {
@@ -215,7 +214,7 @@ public class MainActivity extends Activity {
             Runtime.getRuntime().exec(new String[]{"chmod", "700", qemuBinary.getAbsolutePath()}).waitFor();
             logToUi("✅ qemu-aarch64 готов.");
         } catch (Exception e) {
-            logToUi(" ошибка подготовки QEMU: " + e.getMessage());
+            logToUi("❌ ошибка подготовки QEMU: " + e.getMessage());
         }
     }
 
@@ -244,7 +243,7 @@ public class MainActivity extends Activity {
      *                  Без этого QEMU не найдёт glibc и упадёт.
      *   -E VAR=val   — переменные окружения гостя (PATH, HOME, TERM).
      *
-     * Почему это работает на Android 16:
+     * ПОЧЕМУ ЭТО РАБОТАЕТ НА ANDROID 16:
      *   QEMU user-mode НЕ использует ptrace. Он транслирует syscall'ы на уровне
      *   библиотеки (syscall-emulation), поэтому seccomp-bpf хоста их не блокирует.
      *   Proot же делал ptrace(PTRACE_SYSCALL) → seccomp убивал процесс с SIGSYS.
