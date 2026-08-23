@@ -1,6 +1,6 @@
 #!/bin/bash
 # scripts/prepare_assets.sh
-# Устанавливает ARM64 бинарник QEMU через multiarch apt и скачивает Debian rootfs
+# Скачивает готовый ARM64 бинарник QEMU напрямую из Debian и скачивает rootfs
 
 set -e
 
@@ -8,29 +8,39 @@ PROJECT_ROOT="$(pwd)"
 ASSETS_DIR="$PROJECT_ROOT/app/src/main/assets"
 mkdir -p "$ASSETS_DIR"
 
-echo "=== 1. Получение qemu-aarch64 (ARM64) через multiarch apt ==="
+echo "=== 1. Скачивание готового qemu-aarch64 (ARM64) из Debian ==="
 QEMU_BIN="$ASSETS_DIR/qemu-aarch64"
 
 if [ ! -f "$QEMU_BIN" ]; then
-    echo "Добавление архитектуры arm64 и установка qemu-user-static..."
+    echo "Скачивание пакета qemu-user-static (arm64) напрямую из Debian..."
     
-    # Добавляем поддержку arm64 архитектуры
-    sudo dpkg --add-architecture arm64
-    sudo apt-get update
+    # Прямая ссылка на стабильный arm64 пакет Debian Bookworm
+    QEMU_DEB_URL="http://ftp.debian.org/debian/pool/main/q/qemu/qemu-user-static_7.2.0+dfsg-7+deb12u7_arm64.deb"
+    QEMU_DEB_FILE="$ASSETS_DIR/qemu.deb"
     
-    # Устанавливаем ARM64 версию qemu-user-static
-    sudo apt-get install -y qemu-user-static:arm64 || {
-        echo "❌ Не удалось установить qemu-user-static:arm64"
+    curl -L --fail -o "$QEMU_DEB_FILE" "$QEMU_DEB_URL" || {
+        echo "❌ Не удалось скачать пакет qemu-user-static"
         exit 1
     }
     
-    # Копируем бинарник
-    cp /usr/bin/qemu-aarch64-static "$QEMU_BIN"
+    echo "Извлечение бинарника из .deb пакета..."
+    # Создаем временную директорию для распаковки
+    EXTRACT_DIR="$ASSETS_DIR/qemu-extract"
+    mkdir -p "$EXTRACT_DIR"
+    
+    # Распаковываем deb файл (утилита dpkg-deb есть на всех ubuntu-раннерах по умолчанию)
+    dpkg-deb -x "$QEMU_DEB_FILE" "$EXTRACT_DIR"
+    
+    # Копируем нужный бинарник и переименовываем для удобства
+    cp "$EXTRACT_DIR/usr/bin/qemu-aarch64-static" "$QEMU_BIN"
     chmod +x "$QEMU_BIN"
+    
+    # Очистка временных файлов
+    rm -rf "$EXTRACT_DIR" "$QEMU_DEB_FILE"
     
     # Проверка архитектуры
     if file "$QEMU_BIN" | grep -qi "aarch64\|arm64"; then
-        echo "✅ qemu-aarch64 получен (ARM64)."
+        echo "✅ qemu-aarch64 успешно получен (ARM64)."
         file "$QEMU_BIN"
     else
         echo "❌ ОШИБКА: файл не является ARM64 бинарником!"
