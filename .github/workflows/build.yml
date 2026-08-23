@@ -41,6 +41,11 @@ jobs:
     - name: Setup Android environment
       uses: android-actions/setup-android@v3
 
+    - name: Download Gradle Wrapper JAR
+      run: |
+        mkdir -p gradle/wrapper
+        curl -L -o gradle/wrapper/gradle-wrapper.jar https://github.com/gradle/gradle/raw/v8.7.0/gradle/wrapper/gradle-wrapper.jar
+
     - name: Build with Gradle
       run: |
         chmod +x gradlew
