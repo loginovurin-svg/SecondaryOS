@@ -28,20 +28,36 @@ else
     echo "qemu-aarch64 уже существует, пропускаем."
 fi
 
-echo "=== 2. Скачивание Debian 11 rootfs (arm64, tar.gz) ==="
-# Официальный nocloud образ Debian 11 для arm64 в формате tar.gz
-# Размер ~180-200 МБ. APK будет большим, но rootfs будет встроен.
-ROOTFS_URL="https://cdimage.debian.org/cdimage/cloud/bullseye/latest/debian-11-nocloud-arm64.tar.gz"
-ROOTFS_ARCHIVE="$ASSETS_DIR/debian-rootfs.tar.gz"
+echo "=== 2. Скачивание Debian 11 rootfs (arm64) ==="
+# Пробуем несколько источников
+ROOTFS_ARCHIVE="$ASSETS_DIR/debian-rootfs.tar.xz"
 
 if [ ! -f "$ROOTFS_ARCHIVE" ]; then
-    echo "Скачивание Debian rootfs (это займёт время, ~180 МБ)..."
-    curl -L --fail -o "$ROOTFS_ARCHIVE" "$ROOTFS_URL"
+    echo "Скачивание Debian rootfs..."
     
-    # Проверка размера: должно быть больше 100 МБ
+    # Вариант 1: Andronix (проверенный источник)
+    ROOTFS_URL="https://github.com/AndronixApp/Andronix-Origin/raw/master/Rootfs/Debian/debian-11-arm64.tar.xz"
+    
+    echo "Пробуем: $ROOTFS_URL"
+    HTTP_CODE=$(curl -L -o "$ROOTFS_ARCHIVE" --write-out "%{http_code}" --fail "$ROOTFS_URL" 2>/dev/null || echo "000")
+    
+    if [ "$HTTP_CODE" != "200" ] || [ ! -s "$ROOTFS_ARCHIVE" ]; then
+        echo "❌ Andronix не доступен (HTTP $HTTP_CODE)"
+        rm -f "$ROOTFS_ARCHIVE"
+        
+        # Вариант 2: Официальный Debian cloud image (tar.xz)
+        ROOTFS_URL="https://cdimage.debian.org/cdimage/cloud/bullseye/latest/debian-11-nocloud-arm64.tar.xz"
+        echo "Пробуем: $ROOTFS_URL"
+        curl -L --fail -o "$ROOTFS_ARCHIVE" "$ROOTFS_URL" || {
+            echo "❌ Официальный Debian тоже не доступен"
+            exit 1
+        }
+    fi
+    
+    # Проверка размера
     FILE_SIZE=$(stat -c%s "$ROOTFS_ARCHIVE" 2>/dev/null || stat -f%z "$ROOTFS_ARCHIVE")
-    if [ "$FILE_SIZE" -lt 100000000 ]; then
-        echo "❌ ОШИБКА: Файл слишком мал ($FILE_SIZE байт). Возможно, ссылка устарела."
+    if [ "$FILE_SIZE" -lt 10000000 ]; then
+        echo "❌ Файл слишком мал ($FILE_SIZE байт). Ссылка устарела."
         rm -f "$ROOTFS_ARCHIVE"
         exit 1
     fi
@@ -54,8 +70,8 @@ echo "=== 3. Очистка старых артефактов ==="
 rm -f "$ASSETS_DIR/proot"
 rm -f "$ASSETS_DIR/busybox"
 rm -f "$ASSETS_DIR/toybox"
-rm -f "$ASSETS_DIR/debian-rootfs.tar.xz"
+rm -f "$ASSETS_DIR/debian-rootfs.tar.gz"
 
 echo "=== Итог ==="
 ls -lh "$ASSETS_DIR/"
-echo "✅ Assets готовы. APK будет включать rootfs."
+echo "✅ Assets готовы."
