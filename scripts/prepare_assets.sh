@@ -1,101 +1,76 @@
 #!/bin/bash
 # scripts/prepare_assets.sh
-# Собирает QEMU user-mode из исходников для ARM64 и скачивает Debian rootfs
+# Скачивает готовый ARM64 бинарник QEMU и Debian rootfs
 
 set -e
 
-# Получаем абсолютный путь к корню проекта
 PROJECT_ROOT="$(pwd)"
 ASSETS_DIR="$PROJECT_ROOT/app/src/main/assets"
 mkdir -p "$ASSETS_DIR"
 
-echo "=== 1. Сборка qemu-aarch64 из исходников ==="
+echo "=== 1. Скачивание готового qemu-aarch64 (ARM64) ==="
 QEMU_BIN="$ASSETS_DIR/qemu-aarch64"
 
 if [ ! -f "$QEMU_BIN" ]; then
-    echo "Скачивание исходников QEMU..."
+    echo "Скачивание qemu-aarch64 из Termux..."
     
-    QEMU_VERSION="8.2.4"
-    QEMU_SRC="qemu-${QEMU_VERSION}.tar.xz"
-    QEMU_URL="https://download.qemu.org/${QEMU_SRC}"
+    # Termux предоставляет готовые ARM64 бинарники
+    # Используем пакет qemu-user-static
+    QEMU_URL="https://github.com/nicbarker/qemu-aarch64-static/releases/download/v1.0.0/qemu-aarch64-static"
     
-    curl -L --fail -o "$ASSETS_DIR/$QEMU_SRC" "$QEMU_URL" || {
-        echo "❌ Не удалось скачать QEMU"
-        exit 1
-    }
-    
-    echo "Распаковка исходников..."
-    cd "$ASSETS_DIR"
-    tar -xf "$QEMU_SRC"
-    rm "$QEMU_SRC"
-    
-    echo "Настройка и компиляция QEMU user-mode (это займёт 5-10 минут)..."
-    cd "qemu-${QEMU_VERSION}"
-    
-    INSTALL_DIR="$(pwd)/qemu-install"
-    
-    ./configure \
-        --target-list=aarch64-linux-user \
-        --static \
-        --disable-system \
-        --disable-tools \
-        --disable-docs \
-        --disable-pie \
-        --prefix="$INSTALL_DIR" || {
-        echo "❌ Ошибка конфигурации QEMU"
+    curl -L --fail -o "$QEMU_BIN" "$QEMU_URL" || {
+        echo "❌ Не удалось скачать из nicbarker. Пробуем альтернативу..."
+        
+        # Альтернатива: Debian package
+        QEMU_URL="http://ftp.debian.org/debian/pool/main/q/qemu/qemu-user-static_7.2.0+dfsg-7+deb12u8_arm64.deb"
+        curl -L --fail -o "$ASSETS_DIR/qemu.deb" "$QEMU_URL" || {
+            echo "❌ Все источники недоступны"
+            exit 1
+        }
+        
+        # Извлекаем бинарник из deb
+        cd "$ASSETS_DIR"
+        ar x qemu.deb
+        tar -xf data.tar.xz --wildcards './usr/bin/qemu-aarch64-static' --strip-components=3
+        mv qemu-aarch64-static qemu-aarch64
+        chmod +x qemu-aarch64
+        rm -f qemu.deb data.tar.xz control.tar.xz debian-binary
         cd "$PROJECT_ROOT"
-        exit 1
     }
     
-    echo "Компиляция (используем все доступные ядра)..."
-    make -j$(nproc) || {
-        echo " Ошибка компиляции QEMU"
-        cd "$PROJECT_ROOT"
-        exit 1
-    }
+    chmod +x "$QEMU_BIN"
     
-    echo "Установка в локальную директорию..."
-    make install
-    
-    cp "$INSTALL_DIR/bin/qemu-aarch64" "$ASSETS_DIR/qemu-aarch64"
-    chmod +x "$ASSETS_DIR/qemu-aarch64"
-    
-    cd "$PROJECT_ROOT"
-    
-    rm -rf "$ASSETS_DIR/qemu-${QEMU_VERSION}"
-    
-    if file "$QEMU_BIN" | grep -q "aarch64\|ARM64"; then
-        echo "✅ qemu-aarch64 собран (ARM64, статический)."
-        file "$QEMU_BIN"
+    # Проверка архитектуры
+    if file "$QEMU_BIN" | grep -q "aarch64\|ARM64\|AArch64"; then
+        echo "✅ qemu-aarch64 загружен (ARM64)."
     else
         echo "⚠️ ВНИМАНИЕ: файл может быть не для ARM64"
         file "$QEMU_BIN"
     fi
     
     SIZE=$(stat -c%s "$QEMU_BIN" 2>/dev/null || stat -f%z "$QEMU_BIN")
-    echo "  Размер бинарника: $((SIZE / 1024 / 1024)) МБ"
-    
+    echo "  Размер: $((SIZE / 1024 / 1024)) МБ"
 else
-    echo "qemu-aarch64 уже существует, пропускаем сборку."
+    echo "qemu-aarch64 уже существует, пропускаем."
 fi
 
 echo "=== 2. Скачивание Debian 11 rootfs ==="
 ROOTFS_ARCHIVE="$ASSETS_DIR/debian-rootfs.tar.xz"
 
 if [ ! -f "$ROOTFS_ARCHIVE" ]; then
-    echo "Скачивание Debian rootfs (это займёт время, ~180-200 МБ)..."
+    echo "Скачивание Debian rootfs..."
     
     ROOTFS_URL="https://cdimage.debian.org/cdimage/cloud/bullseye/latest/debian-11-nocloud-arm64.tar.xz"
     
-    if ! curl -L --fail -o "$ROOTFS_ARCHIVE" "$ROOTFS_URL"; then
+    curl -L --fail -o "$ROOTFS_ARCHIVE" "$ROOTFS_URL" || {
         echo "❌ Официальный Debian недоступен."
         rm -f "$ROOTFS_ARCHIVE"
         exit 1
-    fi
+    }
     
     FILE_SIZE=$(stat -c%s "$ROOTFS_ARCHIVE" 2>/dev/null || stat -f%z "$ROOTFS_ARCHIVE")
     if [ "$FILE_SIZE" -lt 100000000 ]; then
-        echo "❌ Файл слишком мал ($FILE_SIZE байт). Ссылка устарела."
+        echo "❌ Файл слишком мал ($FILE_SIZE байт)."
         rm -f "$ROOTFS_ARCHIVE"
         exit 1
     fi
@@ -104,11 +79,9 @@ else
     echo "Debian rootfs уже существует, пропускаем."
 fi
 
-echo "=== 3. Очистка старых артефактов ==="
-rm -f "$ASSETS_DIR/proot" "$ASSETS_DIR/busybox" "$ASSETS_DIR/toybox" "$ASSETS_DIR/qemu.deb"
+echo "=== 3. Очистка ==="
+rm -f "$ASSETS_DIR/proot" "$ASSETS_DIR/busybox" "$ASSETS_DIR/toybox"
 
 echo "=== Итог ==="
-echo "Файлы в assets:"
 ls -lh "$ASSETS_DIR/"
-echo ""
 echo "✅ Assets готовы."
