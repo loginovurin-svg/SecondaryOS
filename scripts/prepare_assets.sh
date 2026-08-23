@@ -1,65 +1,44 @@
-#!/usr/bin/env bash
-set -euo pipefail
+#!/bin/bash
+# scripts/prepare_assets.sh
+# Цель: Подготовка assets для SecondaryOS (Фаза 1: QEMU user-mode + Debian rootfs)
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-ASSETS_DIR="$ROOT/app/src/main/assets"
-JNILIB_DIR="$ROOT/app/src/main/jniLibs/arm64-v8a"
-WORK="$(mktemp -d)"
+set -e
 
-trap 'rm -rf "$WORK"' EXIT
+ASSETS_DIR="app/src/main/assets"
+mkdir -p "$ASSETS_DIR"
 
-echo "=== SecondaryOS prepare_assets ==="
+echo "=== 1. Скачивание статического бинарника qemu-aarch64 ==="
+# Используем стабильный релиз. 
+# ПРОВЕРКА: убедитесь, что скачанный файл является ARM64-бинарником (file qemu-aarch64 должен показать aarch64).
+QEMU_URL="https://github.com/multiarch/qemu-user-static/releases/download/v7.2.0-1/qemu-aarch64-static"
+QEMU_BIN="$ASSETS_DIR/qemu-aarch64"
 
-mkdir -p "$ASSETS_DIR" "$JNILIB_DIR"
-rm -f "$ASSETS_DIR/proot_static" "$JNILIB_DIR/libproot.so" \
-      "$ASSETS_DIR/debian-rootfs.tar.xz" "$ASSETS_DIR/busybox"
-
-# 1. Proot
-echo "=== Скачиваю proot ==="
-curl -sS -fL --retry 3 -o "$WORK/proot" \
-    "https://github.com/proot-me/proot/releases/download/v5.3.0/proot-v5.3.0-aarch64-static"
-
-cp "$WORK/proot" "$ASSETS_DIR/proot_static"
-chmod 0755 "$ASSETS_DIR/proot_static"
-cp "$WORK/proot" "$JNILIB_DIR/libproot.so"
-chmod 0755 "$JNILIB_DIR/libproot.so"
-echo "[OK] proot готов"
-
-# 2. Busybox для Android (статический, musl libc)
-echo "=== Скачиваю busybox для Android ARM64 ==="
-curl -sS -fL --retry 3 -o "$ASSETS_DIR/busybox" \
-    "https://busybox.net/downloads/binaries/1.35.0-aarch64-linux-android-musl/busybox"
-
-if [ -f "$ASSETS_DIR/busybox" ] && [ -s "$ASSETS_DIR/busybox" ]; then
-    chmod 0755 "$ASSETS_DIR/busybox"
-    echo "[OK] busybox скачан"
-    file "$ASSETS_DIR/busybox"
+if [ ! -f "$QEMU_BIN" ]; then
+    echo "Скачивание qemu-aarch64..."
+    curl -L -o "$QEMU_BIN" "$QEMU_URL"
+    chmod +x "$QEMU_BIN"
+    echo "qemu-aarch64 успешно загружен."
 else
-    echo "[ERROR] не удалось скачать busybox"
-    exit 1
+    echo "qemu-aarch64 уже существует, пропускаем."
 fi
 
-# 3. Rootfs Debian 11
-echo "=== Скачиваю Debian 11 rootfs ==="
-ROOTFS_BASE_URL="https://images.linuxcontainers.org/images/debian/bullseye/arm64/default"
+echo "=== 2. Скачивание rootfs Debian 11 (bullseye) ==="
+# Используем проверенный минимальный образ Debian для arm64
+ROOTFS_URL="https://github.com/AndronixApp/Andronix-Origin/raw/master/Rootfs/Debian/debian-11-arm64.tar.xz"
+ROOTFS_ARCHIVE="$ASSETS_DIR/debian-rootfs.tar.xz"
 
-LATEST_DIR=$(curl -sS -fL "$ROOTFS_BASE_URL/" \
-    | grep -oP '(?<=href=")[0-9]{8}_[0-9]{2}%3A[0-9]{2}' \
-    | sort | tail -n 1)
-
-if [[ -z "$LATEST_DIR" ]]; then
-    echo "[ERROR] не найдена папка rootfs bullseye"
-    exit 1
+if [ ! -f "$ROOTFS_ARCHIVE" ]; then
+    echo "Скачивание Debian 11 rootfs..."
+    curl -L -o "$ROOTFS_ARCHIVE" "$ROOTFS_URL"
+    echo "Debian rootfs успешно загружен."
+else
+    echo "Debian rootfs уже существует, пропускаем."
 fi
 
-ROOTFS_URL="$ROOTFS_BASE_URL/$LATEST_DIR/rootfs.tar.xz"
-echo "Найдена сборка: $LATEST_DIR"
+echo "=== 3. Очистка от старых артефактов ==="
+# Мы больше не используем proot и самосборные утилиты из-за seccomp и несовместимости glibc
+rm -f "$ASSETS_DIR/proot"
+rm -f "$ASSETS_DIR/busybox"
+rm -f "$ASSETS_DIR/toybox"
 
-curl -sS -fL --retry 3 -o "$WORK/rootfs.tar.xz" "$ROOTFS_URL"
-cp "$WORK/rootfs.tar.xz" "$ASSETS_DIR/debian-rootfs.tar.xz"
-
-echo
-echo "=== Файлы в assets ==="
-ls -lh "$ASSETS_DIR"
-echo
-echo "=== prepare_assets.sh завершён ==="
+echo "=== Подготовка assets завершена ==="
