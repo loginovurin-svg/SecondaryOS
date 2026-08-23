@@ -1,6 +1,6 @@
 #!/bin/bash
 # scripts/prepare_assets.sh
-# Скачивает готовый ARM64 бинарник QEMU и Debian rootfs в формате tar.gz
+# Скачивает готовый ARM64 бинарник QEMU и создает Debian rootfs в формате tar.gz через Docker
 
 set -e
 
@@ -47,32 +47,28 @@ else
     echo "qemu-aarch64 уже существует, пропускаем."
 fi
 
-echo "=== 2. Скачивание Debian 11 rootfs (tar.gz формат) ==="
+echo "=== 2. Создание Debian 11 rootfs (tar.gz формат) через Docker ==="
 ROOTFS_ARCHIVE="$ASSETS_DIR/debian-rootfs.tar.gz"
 
 if [ ! -f "$ROOTFS_ARCHIVE" ]; then
-    echo "Скачивание Debian rootfs (tar.gz)..."
+    echo "Извлечение rootfs из Docker образа debian:bullseye-slim (arm64)..."
     
-    # Используем Docker для извлечения rootfs из официального образа arm64v8/debian:bullseye
-    echo "Извлечение rootfs из Docker образа debian:bullseye (arm64)..."
-    
-    # Создаем временную директорию
-    TEMP_DIR=$(mktemp -d)
-    cd "$TEMP_DIR"
-    
-    # Скачиваем и извлекаем rootfs из Docker образа
+    # Явно указываем платформу, чтобы на x86_64 раннере скачался и использовался именно arm64 образ
     docker pull --platform linux/arm64 debian:bullseye-slim
-    docker create --name temp-debian debian:bullseye-sleep
-    docker export temp-debian | gzip > "$ROOTFS_ARCHIVE"
-    docker rm temp-debian
     
-    cd "$PROJECT_ROOT"
-    rm -rf "$TEMP_DIR"
+    # Создаем контейнер из arm64 образа (исправлено имя образа)
+    docker create --platform linux/arm64 --name temp-debian-rootfs debian:bullseye-slim
     
-    # Проверка размера
+    # Экспортируем файловую систему контейнера и сжимаем в gzip
+    docker export temp-debian-rootfs | gzip > "$ROOTFS_ARCHIVE"
+    
+    # Удаляем временный контейнер
+    docker rm temp-debian-rootfs
+    
+    # Проверка размера (минимальный debian должен быть > 20 МБ в сжатом виде)
     FILE_SIZE=$(stat -c%s "$ROOTFS_ARCHIVE" 2>/dev/null || stat -f%z "$ROOTFS_ARCHIVE")
-    if [ "$FILE_SIZE" -lt 10000000 ]; then
-        echo "❌ Файл слишком мал ($FILE_SIZE байт)."
+    if [ "$FILE_SIZE" -lt 20000000 ]; then
+        echo "❌ Файл слишком мал ($FILE_SIZE байт). Что-то пошло не так."
         rm -f "$ROOTFS_ARCHIVE"
         exit 1
     fi
