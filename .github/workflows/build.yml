@@ -1,50 +1,53 @@
-name: Build Secondary OS APK
+name: Build SecondaryOS
 
 on:
   push:
-    branches: [ "main" ]
+    branches: [ main ]
   pull_request:
-    branches: [ "main" ]
-  workflow_dispatch:
+    branches: [ main ]
 
 jobs:
   build:
     runs-on: ubuntu-latest
-
+    
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
+    - name: Checkout code
+      uses: actions/checkout@v3
 
     - name: Set up JDK 17
-      uses: actions/setup-java@v4
+      uses: actions/setup-java@v3
       with:
         java-version: '17'
         distribution: 'temurin'
 
-    - name: Setup Android SDK
-      uses: android-actions/setup-android@v3
-
-    - name: Install Android NDK
+    - name: Install build dependencies
       run: |
-        echo "y" | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager "ndk;26.1.10909125"
-        echo "NDK installed at: $ANDROID_HOME/ndk/26.1.10909125"
+        sudo apt-get update
+        sudo apt-get install -y \
+          build-essential \
+          libglib2.0-dev \
+          libpixman-1-dev \
+          python3 \
+          ninja-build \
+          xz-utils \
+          wget \
+          curl
 
-    - name: Prepare Assets (Proot & Rootfs)
+    - name: Prepare assets (QEMU + Debian rootfs)
       run: |
         chmod +x scripts/prepare_assets.sh
         ./scripts/prepare_assets.sh
 
-    - name: Setup Gradle 8.4
-      uses: gradle/actions/setup-gradle@v3
-      with:
-        gradle-version: 8.4
+    - name: Setup Android environment
+      uses: android-actions/setup-android@v3
 
-    - name: Build Debug APK
+    - name: Build with Gradle
       run: |
-        gradle assembleDebug --no-daemon --stacktrace
+        chmod +x gradlew
+        ./gradlew assembleDebug
 
-    - name: Upload APK artifact
-      uses: actions/upload-artifact@v4
+    - name: Upload APK
+      uses: actions/upload-artifact@v3
       with:
-        name: secondary-os-debug
+        name: app-debug
         path: app/build/outputs/apk/debug/app-debug.apk
