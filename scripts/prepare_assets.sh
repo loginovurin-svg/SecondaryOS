@@ -31,9 +31,10 @@ if [ ! -f "$QEMU_BIN" ]; then
     echo "Настройка и компиляция QEMU user-mode (это займёт 5-10 минут)..."
     cd "qemu-${QEMU_VERSION}"
     
+    # Устанавливаем префикс в локальную директорию, доступную для записи без sudo
+    INSTALL_DIR="$(pwd)/qemu-install"
+    
     # Конфигурируем только user-mode эмуляцию для aarch64
-    # --static для статической линковки (не нужны библиотеки на устройстве)
-    # --disable-system отключаем системную эмуляцию (не нужна, экономим время и место)
     ./configure \
         --target-list=aarch64-linux-user \
         --static \
@@ -41,7 +42,7 @@ if [ ! -f "$QEMU_BIN" ]; then
         --disable-tools \
         --disable-docs \
         --disable-pie \
-        --prefix=/usr/local || {
+        --prefix="$INSTALL_DIR" || {
         echo "❌ Ошибка конфигурации QEMU"
         cd ../..
         exit 1
@@ -54,17 +55,17 @@ if [ ! -f "$QEMU_BIN" ]; then
         exit 1
     }
     
-    echo "Установка..."
+    echo "Установка в локальную директорию (без sudo)..."
     make install
     
-    # Копируем бинарник в нужное место
-    cp /usr/local/bin/qemu-aarch64 "$ASSETS_DIR/qemu-aarch64"
+    # Копируем готовый статический бинарник в нужное место
+    cp "$INSTALL_DIR/bin/qemu-aarch64" "$ASSETS_DIR/qemu-aarch64"
     chmod +x "$ASSETS_DIR/qemu-aarch64"
     
     # Возвращаемся обратно
     cd ../..
     
-    # Очистка исходников (экономим место в репозитории)
+    # Очистка исходников и временной директории установки (экономим место в репозитории)
     rm -rf "$ASSETS_DIR/qemu-${QEMU_VERSION}"
     
     # Проверка архитектуры
@@ -78,7 +79,7 @@ if [ ! -f "$QEMU_BIN" ]; then
     
     # Показываем размер
     SIZE=$(stat -c%s "$QEMU_BIN" 2>/dev/null || stat -f%z "$QEMU_BIN")
-    echo "  Размер: $((SIZE / 1024 / 1024)) МБ"
+    echo "  Размер бинарника: $((SIZE / 1024 / 1024)) МБ"
     
 else
     echo "qemu-aarch64 уже существует, пропускаем сборку."
