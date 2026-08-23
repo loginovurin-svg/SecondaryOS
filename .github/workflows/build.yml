@@ -41,10 +41,10 @@ jobs:
     - name: Setup Android environment
       uses: android-actions/setup-android@v3
 
-    - name: Build with Gradle
+    - name: Build with Gradle (system)
       run: |
-        chmod +x gradlew
-        ./gradlew assembleDebug
+        # Используем системный Gradle вместо wrapper
+        gradle assembleDebug
 
     - name: Upload APK
       uses: actions/upload-artifact@v4
