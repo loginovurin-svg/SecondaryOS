@@ -14,8 +14,8 @@ QEMU_BIN="$ASSETS_DIR/qemu-aarch64"
 if [ ! -f "$QEMU_BIN" ]; then
     echo "Скачивание пакета qemu-user-static (arm64) напрямую из Debian..."
     
-    # Прямая ссылка на стабильный arm64 пакет Debian Bookworm
-    QEMU_DEB_URL="http://ftp.debian.org/debian/pool/main/q/qemu/qemu-user-static_7.2.0+dfsg-7+deb12u7_arm64.deb"
+    # АКТУАЛЬНАЯ прямая ссылка на стабильный arm64 пакет Debian Bookworm (v7.2)
+    QEMU_DEB_URL="http://ftp.de.debian.org/debian/pool/main/q/qemu/qemu-user-static_7.2+dfsg-7+deb12u18+b3_arm64.deb"
     QEMU_DEB_FILE="$ASSETS_DIR/qemu.deb"
     
     curl -L --fail -o "$QEMU_DEB_FILE" "$QEMU_DEB_URL" || {
