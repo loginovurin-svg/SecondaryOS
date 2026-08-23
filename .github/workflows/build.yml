@@ -24,11 +24,6 @@ jobs:
       run: |
         sudo apt-get update
         sudo apt-get install -y \
-          build-essential \
-          libglib2.0-dev \
-          libpixman-1-dev \
-          python3 \
-          ninja-build \
           xz-utils \
           wget \
           curl
