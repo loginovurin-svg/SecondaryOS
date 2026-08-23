@@ -140,7 +140,7 @@ public class MainActivity extends Activity {
             }
         }
 
-        logToUi("⚙ Распаковка rootfs из APK (30-90 сек)...");
+        logToUi(" Распаковка rootfs из APK (30-90 сек)...");
         rootfsDir.mkdirs();
 
         try {
