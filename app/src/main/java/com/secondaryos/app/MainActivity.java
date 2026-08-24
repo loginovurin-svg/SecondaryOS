@@ -75,7 +75,7 @@ public class MainActivity extends Activity {
                 shellWriter.flush();
                 inputEditText.setText("");
             } else {
-                logToUi(" Оболочка ещё не запущена или команда пустая.");
+                logToUi("⚠ Оболочка ещё не запущена или команда пустая.");
             }
         });
 
@@ -102,41 +102,50 @@ public class MainActivity extends Activity {
             }
         }
 
-        logToUi("⚙ Распаковка rootfs из APK (30-60 сек)...");
+        logToUi(" Распаковка rootfs из APK (30-60 сек)...");
         rootfsDir.mkdirs();
 
         try {
-            // Проверяем, существует ли файл в assets
-            String[] assets;
-            try {
-                assets = getAssets().list("");
-                boolean found = false;
+            // Ищем файл rootfs в assets (пробуем оба формата)
+            String[] assets = getAssets().list("");
+            String rootfsFilename = null;
+            
+            // Сначала ищем .tar.gz
+            for (String asset : assets) {
+                if (asset.equals("debian-rootfs.tar.gz")) {
+                    rootfsFilename = "debian-rootfs.tar.gz";
+                    break;
+                }
+            }
+            
+            // Если не нашли .tar.gz, ищем просто .tar
+            if (rootfsFilename == null) {
                 for (String asset : assets) {
-                    if (asset.contains("debian-rootfs")) {
-                        logToUi("  найден файл в assets: " + asset);
-                        found = true;
+                    if (asset.equals("debian-rootfs.tar")) {
+                        rootfsFilename = "debian-rootfs.tar";
                         break;
                     }
                 }
-                if (!found) {
-                    logToUi("❌ Файл debian-rootfs.tar.gz не найден в assets!");
-                    logToUi("  Доступные файлы: ");
-                    for (String asset : assets) {
-                        if (asset.length() < 50) {
-                            logToUi("    - " + asset);
-                        }
-                    }
-                    return;
-                }
-            } catch (Exception e) {
-                logToUi("❌ Ошибка проверки assets: " + e.getMessage());
             }
+            
+            if (rootfsFilename == null) {
+                logToUi("❌ Файл rootfs не найден в assets!");
+                logToUi("  Доступные файлы:");
+                for (String asset : assets) {
+                    if (asset.contains("debian") || asset.contains("rootfs")) {
+                        logToUi("    - " + asset);
+                    }
+                }
+                return;
+            }
+            
+            logToUi("  найден файл в assets: " + rootfsFilename);
 
-            File tempArchive = new File(getCacheDir(), "debian-rootfs.tar.gz");
+            File tempArchive = new File(getCacheDir(), rootfsFilename);
             
             // Копируем архив из assets
-            logToUi("  копию архива из assets...");
-            try (InputStream is = getAssets().open("debian-rootfs.tar.gz");
+            logToUi("  копирую архив из assets...");
+            try (InputStream is = getAssets().open(rootfsFilename);
                  FileOutputStream fos = new FileOutputStream(tempArchive)) {
                 byte[] buffer = new byte[65536];
                 int read;
@@ -153,15 +162,26 @@ public class MainActivity extends Activity {
                 return;
             }
 
-            // Пробуем несколько методов распаковки
+            // Распаковываем в зависимости от формата
             logToUi("  запускаем распаковку...");
             
-            // Метод 1: tar -xzf (стандартный)
-            ProcessBuilder pb = new ProcessBuilder(
-                    "tar", "-xzf", 
-                    tempArchive.getAbsolutePath(),
-                    "-C", rootfsDir.getAbsolutePath()
-            );
+            ProcessBuilder pb;
+            if (rootfsFilename.endsWith(".tar.gz")) {
+                // Gzip-сжатый tar
+                pb = new ProcessBuilder(
+                        "tar", "-xzf", 
+                        tempArchive.getAbsolutePath(),
+                        "-C", rootfsDir.getAbsolutePath()
+                );
+            } else {
+                // Обычный tar (несжатый)
+                pb = new ProcessBuilder(
+                        "tar", "-xf", 
+                        tempArchive.getAbsolutePath(),
+                        "-C", rootfsDir.getAbsolutePath()
+                );
+            }
+            
             pb.redirectErrorStream(true);
             Process extractProcess = pb.start();
             
@@ -184,36 +204,6 @@ public class MainActivity extends Activity {
                 logToUi("❌ ошибка распаковки (код: " + exitCode + ").");
                 if (output.length() > 0) {
                     logToUi("  вывод tar: " + output.toString());
-                }
-                logToUi("  пробуем альтернативный метод...");
-                
-                // Метод 2: gunzip + tar
-                try {
-                    tempArchive = new File(getCacheDir(), "debian-rootfs.tar.gz");
-                    try (InputStream is = getAssets().open("debian-rootfs.tar.gz");
-                         FileOutputStream fos = new FileOutputStream(tempArchive)) {
-                        byte[] buffer = new byte[65536];
-                        int read;
-                        while ((read = is.read(buffer)) != -1) {
-                            fos.write(buffer, 0, read);
-                        }
-                    }
-                    
-                    pb = new ProcessBuilder("sh", "-c", 
-                        "gunzip -c " + tempArchive.getAbsolutePath() + " | tar -xf - -C " + rootfsDir.getAbsolutePath());
-                    pb.redirectErrorStream(true);
-                    extractProcess = pb.start();
-                    
-                    exitCode = extractProcess.waitFor();
-                    tempArchive.delete();
-                    
-                    if (exitCode == 0 && rootfsDir.list() != null && rootfsDir.list().length > 0) {
-                        logToUi("✅ rootfs распакован альтернативным методом (" + rootfsDir.list().length + " объектов).");
-                    } else {
-                        logToUi(" альтернативный метод также не сработал");
-                    }
-                } catch (Exception e) {
-                    logToUi("❌ ошибка альтернативного метода: " + e.getMessage());
                 }
             }
 
