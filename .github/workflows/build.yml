@@ -43,13 +43,18 @@ jobs:
 
     - name: Build with Gradle
       env:
-        # КРИТИЧЕСКИ ВАЖНО: Передаем настройки памяти напрямую в среду сборки GitHub Actions,
-        # чтобы переопределить любые дефолтные ограничения и избежать Java heap space.
+        # Принудительно передаем настройки памяти в CI
         ORG_GRADLE_PROJECT_org.gradle.jvmargs: "-Xmx2048m -Dfile.encoding=UTF-8"
       run: |
         chmod +x gradlew
-        ./gradlew assembleDebug
+        # КЛЮЧЕВОЕ ИЗМЕНЕНИЕ: clean удаляет старый кэш и заставляет собрать APK с нуля
+        ./gradlew clean assembleDebug
 
+    - name: Check APK contents (Диагностика)
+      run: |
+        echo "=== Проверяем, попали ли assets в итоговый APK ==="
+        unzip -l app/build/outputs/apk/debug/app-debug.apk | grep -E "qemu|rootfs" || echo "❌ ВНИМАНИЕ: Файлы qemu или rootfs НЕ НАЙДЕНЫ внутри APK!"
+        
     - name: Upload APK
       uses: actions/upload-artifact@v4
       with:
