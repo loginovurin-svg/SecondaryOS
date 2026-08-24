@@ -9,42 +9,31 @@ android {
     defaultConfig {
         applicationId "com.secondaryos.app"
         minSdk 26
-        // ВАЖНО: 28, как у Termux.
-        // Android 10+ запрещает выполнять файлы из папки files/
-        // приложения, если targetSdk >= 29. Со значением 28
-        // SELinux разрешает exec, и контейнер сможет запускать bash.
-        targetSdk 28
-        versionCode 2
-        versionName "0.2"
-
-        // Только arm64 — целевое устройство Galaxy A15 (Helio G99)
-        ndk {
-            abiFilters 'arm64-v8a'
-        }
+        targetSdk 34
+        versionCode 1
+        versionName "1.0"
     }
 
     buildTypes {
         release {
             minifyEnabled false
-        }
-    }
-
-    // Заставляет Android распаковывать .so из jniLibs на диск
-    // в nativeLibraryDir — иначе libproot.so нельзя выполнить
-    packagingOptions {
-        jniLibs {
-            useLegacyPackaging = true
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
         }
     }
 
     compileOptions {
-        sourceCompatibility JavaVersion.VERSION_17
-        targetCompatibility JavaVersion.VERSION_17
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
+    }
+
+    aaptOptions {
+        // Запрещаем сжатие файлов, которые уже сжаты.
+        // Это предотвращает их выпадение из APK и ошибки упаковки.
+        noCompress 'tar.gz', 'xz', 'tar', 'gz'
     }
 }
 
 dependencies {
-    // Распаковка tar.xz внутри приложения
-    implementation 'org.apache.commons:commons-compress:1.26.2'
-    implementation 'org.tukaani:xz:1.9'
+    implementation 'androidx.appcompat:appcompat:1.6.1'
+    implementation 'com.google.android.material:material:1.9.0'
 }
